@@ -1,7 +1,7 @@
 [project]
 name = "tele-scraper"
 version = "0.1.0"
-description = "Scrapes telecloud component validity and notifies recipients across multiple channels."
+description = "Telecloud subscription renewal notifier: watches component expiry and alerts recipients across email, Telegram, Slack and Discord."
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "pydantic>=2.9,<3",

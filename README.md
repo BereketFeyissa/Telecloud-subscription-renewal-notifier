@@ -1,7 +1,12 @@
-# tele_scraper
+# Telecloud Subscription Renewal Notifier
 
 Watches the purchased **telecloud components** on Ethio Telecom's self-service portal and tells
 people before one lapses — by email, Telegram, Slack or Discord.
+
+> **A note on names.** The Python package, the container and the Kubernetes resources are still
+> called `tele_scraper` / `tele-scraper`, so commands below read `python -m tele_scraper` and
+> `kubectl ... deploy/tele-scraper`. Scraping is only how this works; renewal notification is
+> what it is *for*, which is what the project is named after.
 
 This is an **alerting system**. A missed or wrong alert is a production incident, so the design
 prefers loud failure over quiet optimism: nothing is ever reported healthy on the strength of
@@ -106,7 +111,7 @@ worth knowing: the response's `validityPeriod` is **time remaining**, not the pu
 Deployment, releases, credential rotation and day-to-day changes:
 [deploy/README.md](deploy/README.md).
 
-Metrics are scraped from `/metrics` on port 9100. The series that matters most is
+Metrics are exposed on `/metrics`, port 9100. The series that matters most is
 `scrape_last_success_timestamp_seconds` — **alert on its staleness**. A scheduler that has
 quietly stopped looks exactly like "nothing is wrong".
 

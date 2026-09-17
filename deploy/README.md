@@ -1,4 +1,7 @@
-# Deploying tele_scraper
+# Deploying the Telecloud Subscription Renewal Notifier
+
+The workload, its Kubernetes resources and the Python module are named `tele-scraper` /
+`tele_scraper`; every command below uses those literal names.
 
 Kustomize, one base plus `dev` and `prod` overlays. Environment differences live only in
 overlays (CLAUDE.md §14.10).
@@ -220,7 +223,7 @@ A suggested staleness rule:
   expr: time() - scrape_last_success_timestamp_seconds > 3 * 3600
   for: 10m
   annotations:
-    summary: tele_scraper has not completed a successful cycle in over 3 hours
+    summary: Telecloud renewal notifier has not completed a successful cycle in over 3 hours
 ```
 
 Health endpoints: `/healthz` (liveness — is the loop still checking in?) and `/readyz`

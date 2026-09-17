@@ -61,7 +61,7 @@ jobs:
             type=ref,event=tag
           labels: |
             org.opencontainers.image.title=tele-scraper
-            org.opencontainers.image.description=Telecloud component validity scraper and multi-channel notifier
+            org.opencontainers.image.description=Watches telecloud component expiry and notifies recipients across email, Telegram, Slack and Discord
 
       - uses: docker/build-push-action@v6
         with:
