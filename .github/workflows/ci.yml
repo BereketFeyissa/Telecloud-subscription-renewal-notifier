@@ -66,7 +66,7 @@ jobs:
           else:
               sys.exit("domain/status.py missing from the coverage report")
           PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage
