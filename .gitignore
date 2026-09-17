@@ -6,8 +6,8 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
-dist/
-build/
+/dist/
+/build/
 *.egg-info/
 
 # secrets & scraped data - NEVER commit (CLAUDE.md §3)
@@ -21,6 +21,9 @@ build/
 !deploy/base/portal-ca.pem
 cookies.json
 storage_state.json
-debug/
-state/
+# Anchored with a leading slash so they match only at the repository root. Unanchored,
+# `state/` also matched src/tele_scraper/state/ and silently kept the dedup store out of the
+# repository - the package imported fine locally and was simply absent in CI.
+/debug/
+/state/
 *.sqlite3
