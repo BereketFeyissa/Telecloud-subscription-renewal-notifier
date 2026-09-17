@@ -1,0 +1,81 @@
+name: Release image
+
+# Publishes to GitHub's own container registry, which authenticates with the built-in
+# GITHUB_TOKEN - no registry credentials to configure or rotate. Point the overlays at
+# ghcr.io/<owner>/<repo> and set newTag to the SHA this publishes.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Why you are publishing off a tag
+        required: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  publish:
+    name: build & push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Never publish something that would not pass review (CLAUDE.md §17).
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --frozen --all-groups
+      - name: gate
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy
+          uv run pytest
+
+      - name: lowercase image name
+        id: name
+        run: echo "image=${REGISTRY}/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The git SHA is the real identity of a build; a tag is a convenience alias.
+      # ':latest' is deliberately absent (CLAUDE.md §13.7).
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ steps.name.outputs.image }}
+          tags: |
+            type=sha,format=long,prefix=
+            type=ref,event=tag
+          labels: |
+            org.opencontainers.image.title=tele-scraper
+            org.opencontainers.image.description=Telecloud component validity scraper and multi-channel notifier
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: deployment hint
+        run: |
+          echo "### Published" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.meta.outputs.tags }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "Set \`newName\`/\`newTag\` in deploy/overlays/prod to the digest-pinned image above." >> "$GITHUB_STEP_SUMMARY"

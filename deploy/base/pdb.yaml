@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: tele-scraper
+spec:
+  # With a single replica this blocks voluntary disruption entirely. That is deliberate: a node
+  # drain should not silently stop alerting (CLAUDE.md §14.13). Drain with --disable-eviction
+  # or scale to zero first when you genuinely need the node.
+  maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tele-scraper

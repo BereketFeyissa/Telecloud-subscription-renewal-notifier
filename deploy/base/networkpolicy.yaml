@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tele-scraper
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: tele-scraper
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    # Prometheus scraping /metrics. Narrow the namespace selector to your monitoring namespace.
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - port: 9100
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Portal and notification endpoints. Tighten to specific CIDRs once the portal's address
+    # range is known (CLAUDE.md §14.12).
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 587
+          protocol: TCP

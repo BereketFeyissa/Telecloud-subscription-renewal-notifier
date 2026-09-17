@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# secrets & scraped data - NEVER commit (CLAUDE.md §3)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+# The portal's missing intermediate CA is a PUBLIC certificate and the manifests mount it as a
+# ConfigMap, so it must be committed despite the *.pem rule above.
+!deploy/base/portal-ca.pem
+cookies.json
+storage_state.json
+debug/
+state/
+*.sqlite3

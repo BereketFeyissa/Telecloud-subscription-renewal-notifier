@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tele-scraper
+  labels:
+    app.kubernetes.io/name: tele-scraper
+spec:
+  # Exactly one replica. A second replica would evaluate and notify independently, and the
+  # SQLite dedup store is not shared, so everyone would be paged twice. Scaling out requires
+  # leader election first (CLAUDE.md §14.1, §14.11).
+  replicas: 1
+  strategy:
+    # Recreate, not RollingUpdate: the state PVC is ReadWriteOnce, so two pods cannot mount it
+    # at once and a rolling update would deadlock.
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tele-scraper
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tele-scraper
+    spec:
+      serviceAccountName: tele-scraper
+      # Must exceed RUN_TIMEOUT_SECONDS so an in-flight cycle can finish on SIGTERM
+      # (CLAUDE.md §14.3).
+      terminationGracePeriodSeconds: 960
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: tele-scraper
+          image: tele-scraper:REPLACED_BY_OVERLAY
+          imagePullPolicy: IfNotPresent
+          args: []
+          ports:
+            - name: metrics
+              containerPort: 9100
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          envFrom:
+            - configMapRef:
+                name: tele-scraper-config
+            - secretRef:
+                name: tele-scraper-secrets
+          env:
+            - name: NOTIFY_ROUTES_FILE
+              value: /etc/tele-scraper/routes.json
+            - name: STATE_DSN
+              value: /var/lib/tele-scraper/state.sqlite3
+            - name: PORTAL_CA_BUNDLE
+              value: /etc/tele-scraper/ca/portal-ca.pem
+          volumeMounts:
+            - name: routes
+              mountPath: /etc/tele-scraper
+              readOnly: true
+            - name: ca
+              mountPath: /etc/tele-scraper/ca
+              readOnly: true
+            - name: state
+              mountPath: /var/lib/tele-scraper
+            - name: tmp
+              mountPath: /tmp
+          # A slow first scrape must not cause a restart loop.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            periodSeconds: 30
+            # Longer than the scrape timeout, or Kubernetes kills runs mid-flight
+            # (CLAUDE.md §14.2).
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: routes
+          configMap:
+            name: tele-scraper-routes
+        - name: ca
+          configMap:
+            name: tele-scraper-ca
+        - name: state
+          persistentVolumeClaim:
+            claimName: tele-scraper-state
+        - name: tmp
+          emptyDir: {}

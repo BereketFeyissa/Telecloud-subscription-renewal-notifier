@@ -1,0 +1,17 @@
+{% if is_critical %}🔴{% else %}🟠{% endif %} *{{ status }}* — {{ component_name }}
+
+`{{ component_id }}`
+Expires: {{ expires_display }}
+Remaining: {{ remaining_display }}
+Portal: {{ portal_status }}
+{% if expires_derived %}
+_Expiry derived from activation + validity, not scraped directly._
+{% endif %}
+{% if status == 'UNKNOWN' %}
+_Validity could not be determined — not confirmed active. Check the portal._
+{% endif %}
+
+_Repeats until confirmed._
+{% if is_credential %}
+_This is tele_scraper's own portal login. Once it expires, all alerts stop — including real ones. Update PORTAL_PASSWORD_HASH after changing it._
+{% endif %}

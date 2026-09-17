@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: tele-scraper
+namePrefix: prod-
+
+resources:
+  - ../../base
+
+images:
+  - name: tele-scraper
+    newName: registry.example.test/tele-scraper
+    newTag: REPLACE_WITH_GIT_SHA   # never :latest (CLAUDE.md §13.7)
+
+# The only environment that actually delivers notifications.
+configMapGenerator:
+  - name: tele-scraper-config
+    behavior: merge
+    literals:
+      - NOTIFY_ENABLED=true
+      - DRY_RUN=false
+      - LOG_LEVEL=INFO
+      - RUN_INTERVAL_SECONDS=3600
+      - PORTAL_BASE_URL=https://portal.example.test

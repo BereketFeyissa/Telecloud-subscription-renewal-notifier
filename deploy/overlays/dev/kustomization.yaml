@@ -1,0 +1,33 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: tele-scraper-dev
+namePrefix: dev-
+
+resources:
+  - ../../base
+
+images:
+  - name: tele-scraper
+    newName: registry.example.test/tele-scraper
+    newTag: REPLACE_WITH_GIT_SHA   # never :latest (CLAUDE.md §13.7)
+
+# Dev never sends. Flip NOTIFY_ENABLED only in prod.
+configMapGenerator:
+  - name: tele-scraper-config
+    behavior: merge
+    literals:
+      - NOTIFY_ENABLED=false
+      - DRY_RUN=true
+      - LOG_LEVEL=DEBUG
+      - RUN_INTERVAL_SECONDS=900
+      - PORTAL_BASE_URL=https://portal-staging.example.test
+
+patches:
+  - target:
+      kind: Deployment
+      name: tele-scraper
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 256Mi

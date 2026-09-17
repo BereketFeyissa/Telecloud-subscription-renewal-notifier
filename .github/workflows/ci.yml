@@ -1,0 +1,160 @@
+name: CI
+
+# Enforces the Definition of Done in CLAUDE.md §17. If this is red, the work is not done.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: nothing here needs to write to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned so a CI run cannot silently drift onto a different interpreter than the image uses.
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  quality:
+    name: lint & types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --frozen --all-groups
+      - name: ruff check
+        run: uv run ruff check --output-format=github .
+      - name: ruff format
+        run: uv run ruff format --check .
+      - name: mypy --strict
+        run: uv run mypy
+
+  test:
+    name: tests & coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --frozen --all-groups
+      # Live tests are excluded by pyproject's addopts and MUST NOT run here (CLAUDE.md §11.7).
+      - name: pytest with coverage gate
+        run: uv run pytest --cov --cov-branch --cov-report=term-missing --cov-report=xml
+      - name: domain/status.py must stay at 100% branch coverage
+        run: |
+          uv run python - <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          root = ET.parse("coverage.xml").getroot()
+          for cls in root.iter("class"):
+              if cls.get("filename", "").endswith("domain/status.py"):
+                  line = float(cls.get("line-rate", 0))
+                  branch = float(cls.get("branch-rate", 0))
+                  print(f"status.py line={line:.2%} branch={branch:.2%}")
+                  if line < 1.0 or branch < 1.0:
+                      sys.exit("CLAUDE.md §11.3 requires 100% branch coverage of the status ladder")
+                  break
+          else:
+              sys.exit("domain/status.py missing from the coverage report")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage.xml
+          retention-days: 7
+
+  image:
+    name: container image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: tele-scraper:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      # CLAUDE.md §13.3 / §13.4: the image must run as a non-root UID with a read-only rootfs.
+      - name: runs as non-root uid 10001
+        run: |
+          uid=$(docker run --rm --entrypoint python tele-scraper:ci -c 'import os; print(os.getuid())')
+          echo "uid=$uid"
+          [ "$uid" = "10001" ] || { echo "::error::image must run as uid 10001, got $uid"; exit 1; }
+      - name: starts with a read-only root filesystem
+        env:
+          ROUTES: '{"routes":[{"recipient":"ci","channels":[{"channel":"email","address":"ci@example.test"}]}]}'
+        run: |
+          docker run --rm --read-only --tmpfs /tmp --user 10001:10001 \
+            -e PORTAL_BASE_URL=https://portal.example.test \
+            -e PORTAL_USERNAME=ci -e PORTAL_PASSWORD_HASH=0000000000000000000000000000000000000000000000000000000000000000 \
+            -e SMTP_HOST=smtp.example.test -e SMTP_FROM=ci@example.test \
+            -e "NOTIFY_ROUTES_JSON=$ROUTES" \
+            tele-scraper:ci --check-config
+
+  manifests:
+    name: kubernetes manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-kubectl@v4
+      - name: install kubeconform
+        env:
+          KUBECONFORM_VERSION: v0.6.7
+        run: |
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | tar -xz -C /usr/local/bin kubeconform
+          kubeconform -v
+      # CLAUDE.md §14.14. -ignore-missing-schemas covers the ServiceMonitor CRD only.
+      - name: render and validate every overlay
+        run: |
+          for overlay in deploy/overlays/*/; do
+            echo "::group::$overlay"
+            kubectl kustomize "$overlay" | kubeconform -strict -ignore-missing-schemas -summary
+            echo "::endgroup::"
+          done
+      - name: no floating image tags
+        run: |
+          # CLAUDE.md §13.7 / §3.6: ':latest' or an untagged image must never reach a cluster.
+          if kubectl kustomize deploy/overlays/prod | grep -nE 'image: .*(:latest|^[^:]*$)'; then
+            echo "::error::a manifest uses :latest or an untagged image"
+            exit 1
+          fi
+
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # A belt-and-braces check for the shapes this project handles, in case gitleaks'
+      # rules miss one. This repository is public (CLAUDE.md §3.1, §3.2).
+      - name: project-specific credential shapes
+        run: |
+          set +e
+          patterns='[0-9]{8,12}:AA[A-Za-z0-9_-]{30,}|discord(app)?\.com/api/webhooks/[0-9]+/[A-Za-z0-9_-]+|hooks\.slack\.com/services/T[A-Za-z0-9/]+'
+          hits=$(grep -rInE "$patterns" --exclude-dir=.git . | grep -v '\.github/workflows/')
+          if [ -n "$hits" ]; then
+            echo "::error::possible live credential committed"
+            echo "$hits"
+            exit 1
+          fi
+          echo "no credential-shaped strings found"

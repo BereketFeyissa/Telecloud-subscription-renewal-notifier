@@ -1,0 +1,54 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - serviceaccount.yaml
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+  - pdb.yaml
+  - networkpolicy.yaml
+  - servicemonitor.yaml
+  - secret.stub.yaml
+
+# Generated with a name suffix hash, so editing config or routing rolls the pods. The process
+# reads configuration once at startup, so without this a change would sit unapplied
+# (CLAUDE.md §14.7).
+configMapGenerator:
+  - name: tele-scraper-config
+    literals:
+      - PORTAL_BASE_URL=https://portal.example.test
+      - PORTAL_USERNAME=service-account-name
+      - PORTAL_LOGIN_PATH=/login
+      - PORTAL_COMPONENTS_PATH=/components
+      # Empty until the portal's vocabulary is known: while unset, nothing is ever SUSPENDED.
+      - PORTAL_SUSPENDED_TOKENS=
+      - APP_TIMEZONE=Africa/Addis_Ababa
+      - WARN_THRESHOLDS=14d,7d,3d,1d,12h
+      - RUN_INTERVAL_SECONDS=3600
+      - RUN_JITTER_SECONDS=30
+      - RUN_TIMEOUT_SECONDS=900
+      - SCRAPE_TIMEOUT_SECONDS=30
+      - SCRAPE_DELAY_SECONDS=1.0
+      - SCRAPE_CONCURRENCY=2
+      - SCRAPE_USER_AGENT=tele-scraper/0.1 (ops@example.test)
+      - NOTIFY_ENABLED=false
+      - DRY_RUN=false
+      - LOG_LEVEL=INFO
+      - LOG_FORMAT=json
+      - METRICS_PORT=9100
+      - STATE_BACKEND=sqlite
+      - STATE_RETENTION_DAYS=30
+  - name: tele-scraper-routes
+    files:
+      - routes.json
+  # The portal serves its leaf certificate without the intermediate, so we supply it.
+  # Public certificate, not a secret - a ConfigMap is the right home.
+  - name: tele-scraper-ca
+    files:
+      - portal-ca.pem
+
+labels:
+  - includeSelectors: true
+    pairs:
+      app.kubernetes.io/name: tele-scraper

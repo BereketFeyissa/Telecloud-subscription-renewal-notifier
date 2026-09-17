@@ -1,0 +1,25 @@
+Telecloud component status: {{ status }}
+
+Component : {{ component_name }}
+ID        : {{ component_id }}
+Status    : {{ status }}{% if reason %} ({{ reason }}){% endif +%}
+Portal    : {{ portal_status }}
+Expires   : {{ expires_display }}
+Remaining : {{ remaining_display }}
+{% if expires_derived %}
+Note: the expiry above was computed from activation date + validity period, not read
+directly from the portal. Verify before acting on it.
+{% endif %}
+{% if status == 'UNKNOWN' %}
+This component's validity could not be determined. It is NOT confirmed active — someone
+needs to check the portal directly.
+{% endif %}
+
+Checked at {{ evaluated_at.strftime('%Y-%m-%d %H:%M:%S UTC') }} · recipient: {{ recipient }}
+
+This alert repeats every run until someone confirms it.
+{% if is_credential %}
+This is tele_scraper's own portal login, not a purchased component. Once it expires every
+run fails to authenticate and you stop receiving these alerts entirely — including for
+components that really are expiring. Update PORTAL_PASSWORD_HASH after changing it.
+{% endif %}

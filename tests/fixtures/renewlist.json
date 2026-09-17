@@ -1,0 +1,64 @@
+{
+  "_comment": "REDACTED fixture modelled on GET /api/cbp/thirdapi/v1/renewal_service/renewlist. Identifiers, names and order numbers are fabricated; field names, date formats and status wording are reproduced exactly, because those are what the parser reads (CLAUDE.md §3.1, §7.8).",
+  "status": 0,
+  "resMsg": "succeed",
+  "data": {
+    "total": 5,
+    "items": [
+      {
+        "id": "00000000-0000-4000-8000-00000000aaaa",
+        "name": "aaaaaa",
+        "orderId": "CBP00000000000000001",
+        "serviceType": "EIP",
+        "registrationTime": "2026-04-29 15:09:55.083 +0000 UTC",
+        "purchaseTime": "2026-04-29 15:09:55.083 +0000 UTC",
+        "expirationTime": "2027-09-22 05:19:55.864 +0000 UTC",
+        "validityPeriod": "370d20h58m45s",
+        "status": "Active"
+      },
+      {
+        "id": "00000000-0000-4000-8000-00000000bbbb",
+        "name": "bbbbbb",
+        "orderId": "CBP00000000000000002",
+        "serviceType": "OBS",
+        "registrationTime": "2025-10-05 08:55:41.057 +0000 UTC",
+        "purchaseTime": "2025-10-05 08:55:41.057 +0000 UTC",
+        "expirationTime": "2026-09-19 05:19:55.79 +0000 UTC",
+        "validityPeriod": "2d20h58m45s",
+        "status": "Active"
+      },
+      {
+        "id": "00000000-0000-4000-8000-00000000cccc",
+        "name": "cccccc",
+        "orderId": "CBP00000000000000003",
+        "serviceType": "ECS",
+        "registrationTime": "2025-10-05 08:55:41.053 +0000 UTC",
+        "purchaseTime": "2025-10-05 08:55:41.053 +0000 UTC",
+        "expirationTime": "2026-09-16 05:51:20.379 +0000 UTC",
+        "validityPeriod": "-1d-2h-29m-49s",
+        "status": "Active"
+      },
+      {
+        "id": "00000000-0000-4000-8000-00000000dddd",
+        "name": "dddddd",
+        "orderId": "CBP00000000000000004",
+        "serviceType": "CCE",
+        "registrationTime": "2025-10-05 08:55:41.046 +0000 UTC",
+        "purchaseTime": "2025-10-05 08:55:41.046 +0000 UTC",
+        "expirationTime": "",
+        "validityPeriod": "5d0h0m0s",
+        "status": "Active"
+      },
+      {
+        "id": "",
+        "name": "eeeeee",
+        "orderId": "CBP00000000000000005",
+        "serviceType": "EIP",
+        "purchaseTime": "2025-10-05 08:55:41.046 +0000 UTC",
+        "expirationTime": "2027-01-01 00:00:00 +0000 UTC",
+        "validityPeriod": "100d0h0m0s",
+        "status": "Active"
+      }
+    ]
+  }
+}

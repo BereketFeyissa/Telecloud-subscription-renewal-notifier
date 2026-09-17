@@ -1,0 +1,15 @@
+# Requires the Prometheus Operator CRDs. Validate with:
+#   kubeconform -strict -ignore-missing-schemas
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: tele-scraper
+  labels:
+    app.kubernetes.io/name: tele-scraper
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tele-scraper
+  endpoints:
+    - port: metrics
+      interval: 60s

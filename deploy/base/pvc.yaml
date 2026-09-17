@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tele-scraper-state
+spec:
+  # The dedup store MUST survive restarts. On an emptyDir every restart would re-send every
+  # outstanding alert (CLAUDE.md §14.9).
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi

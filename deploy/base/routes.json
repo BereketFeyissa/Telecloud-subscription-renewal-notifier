@@ -1,0 +1,26 @@
+{
+  "routes": [
+    {
+      "recipient": "ops-team",
+      "channels": [
+        { "channel": "slack", "address_env": "SLACK_WEBHOOK_OPS" },
+        { "channel": "discord", "address_env": "DISCORD_WEBHOOK_OPS" },
+        { "channel": "email", "address": "ops@example.test" }
+      ],
+      "statuses": ["EXPIRED", "EXPIRING_SOON", "UNKNOWN", "SUSPENDED"],
+      "components": ["*"],
+      "locale": "en"
+    },
+    {
+      "recipient": "billing-owner",
+      "channels": [
+        { "channel": "email", "address": "billing@example.test" },
+        { "channel": "telegram", "address": "REPLACE_WITH_CHAT_ID" }
+      ],
+      "statuses": ["EXPIRED", "EXPIRING_SOON"],
+      "components": ["*"],
+      "locale": "en",
+      "quiet_hours": { "start": "22:00", "end": "06:00", "tz": "Africa/Addis_Ababa" }
+    }
+  ]
+}
