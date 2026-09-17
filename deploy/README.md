@@ -25,23 +25,71 @@ Scaling out requires leader election or a shared store first (CLAUDE.md §14.11)
 The dedup store lives on a PVC. It must never be an `emptyDir`: on every restart the pod would
 forget what it had already sent and re-alert on everything outstanding.
 
+## Releasing an image
+
+Images are built and published by CI, not from a laptop — a locally built image is
+unreproducible and unattributable.
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+That fires [release.yml](../.github/workflows/release.yml), which re-runs the full gate (ruff,
+mypy, pytest) before building, then pushes to GitHub's own container registry. It authenticates
+with the built-in `GITHUB_TOKEN`, so there are no registry credentials to configure or rotate.
+
+Two tags are published and **`:latest` deliberately is not** (CLAUDE.md §13.7):
+
+```
+ghcr.io/bereketfeyissa/telecloud-subscription-renewal-notifier:<full-git-sha>
+ghcr.io/bereketfeyissa/telecloud-subscription-renewal-notifier:v0.1.0
+```
+
+Deploy the **SHA**, not the version tag: a version tag can be moved, a SHA cannot. The run's
+summary page prints the exact reference to paste into the overlay's `newTag`.
+
+### One-time setup after the first release
+
+A new GHCR package is **private by default**, and the cluster cannot pull it until you either
+make it public, or create a pull secret:
+
+```bash
+# Option A - public image, simplest, nothing in the cluster to maintain
+gh api -X PATCH user/packages/container/telecloud-subscription-renewal-notifier \
+  -f visibility=public
+
+# Option B - keep it private, give the cluster a read-only token
+kubectl create secret docker-registry ghcr \
+  --namespace tele-scraper \
+  --docker-server=ghcr.io \
+  --docker-username=BereketFeyissa \
+  --docker-password=<a PAT with read:packages> \
+  && kubectl patch serviceaccount tele-scraper -n tele-scraper \
+       -p '{"imagePullSecrets":[{"name":"ghcr"}]}'
+```
+
+### Refreshing the base image digest
+
+The Dockerfile pins `python:3.12-slim` by digest. To move it deliberately:
+
+```bash
+docker pull python:3.12-slim
+docker inspect --format='{{index .RepoDigests 0}}' python:3.12-slim
+```
+
+Dependabot will not propose Python major or minor bumps; the interpreter is pinned by
+CLAUDE.md §4 and `requires-python`.
+
 ## Before first deploy
 
-1. **Build and push the image.** The base is already digest-pinned in the Dockerfile.
-   ```bash
-   make image                                   # tags with the short git SHA
-   docker push registry.example.test/tele-scraper:$(git rev-parse --short HEAD)
-   ```
-   To refresh the base digest later:
-   ```bash
-   docker pull python:3.12-slim
-   docker inspect --format='{{index .RepoDigests 0}}' python:3.12-slim
-   ```
-2. **Set the image tag** in each overlay to that git SHA. Never `:latest`.
-3. **Create the real Secret** (see below).
-4. **Set `PORTAL_SUSPENDED_TOKENS`** once the portal's vocabulary is known. While it is empty,
-   no component is ever classified `SUSPENDED`.
-5. **Leave `NOTIFY_ENABLED=false`** until a dry run against the real portal looks right.
+1. **Release an image** and set `newTag` in the overlay to the published SHA (above).
+2. **Create the real Secret** (see below) — including `PORTAL_PASSWORD_HASH`, the digest the
+   browser sends rather than the password itself.
+3. **Set `PORTAL_SUSPENDED_TOKENS`** once the portal's vocabulary is known. While it is empty,
+   no component is ever classified `SUSPENDED`. Expiry detection does not depend on it.
+4. **Leave `NOTIFY_ENABLED=false`** until a dry run against the real portal looks right, then
+   verify delivery with `--test-notify` before trusting it.
 
 ## Credentials
 

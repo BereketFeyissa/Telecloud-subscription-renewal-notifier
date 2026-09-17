@@ -9,8 +9,10 @@ resources:
 
 images:
   - name: tele-scraper
-    newName: registry.example.test/tele-scraper
-    newTag: REPLACE_WITH_GIT_SHA   # never :latest (CLAUDE.md §13.7)
+    newName: ghcr.io/bereketfeyissa/telecloud-subscription-renewal-notifier
+    # The full git SHA published by release.yml. Deploy the SHA, not the version
+    # tag: a tag can be moved, a SHA cannot. Never :latest (CLAUDE.md §13.7).
+    newTag: REPLACE_WITH_RELEASED_SHA
 
 # Dev never sends. Flip NOTIFY_ENABLED only in prod.
 configMapGenerator:
