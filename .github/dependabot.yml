@@ -1,20 +1,37 @@
-# Actions are referenced by major-version tag, which is mutable. Dependabot is what keeps
-# them honest; without it, pinning by tag quietly rots.
+# Grouped so one week's updates arrive as a couple of reviewable PRs rather than a dozen
+# competing ones - they all touch uv.lock or ci.yml and would otherwise conflict with each
+# other on every merge.
+#
+# Major bumps are not proposed as routine updates: they are a deliberate decision, not
+# housekeeping. Dependabot security alerts still surface vulnerable dependencies, and
+# security update PRs are raised regardless of the version-update rules below.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
     commit-message:
       prefix: "ci"
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: uv
     directory: /
     schedule:
       interval: weekly
+    groups:
+      python-dependencies:
+        patterns: ["*"]
     commit-message:
       prefix: "build"
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: docker
     directory: /
@@ -23,9 +40,8 @@ updates:
     commit-message:
       prefix: "build"
     ignore:
-      # The interpreter version is pinned in CLAUDE.md §4 and in requires-python. Moving it is
-      # a deliberate decision, not a dependency bump, so only security and digest refreshes of
-      # the 3.12 line are wanted here.
+      # The interpreter is pinned by CLAUDE.md §4 and requires-python; moving it is a
+      # deliberate decision. Only security and digest refreshes of the 3.12 line are wanted.
       - dependency-name: python
         update-types:
           - version-update:semver-major

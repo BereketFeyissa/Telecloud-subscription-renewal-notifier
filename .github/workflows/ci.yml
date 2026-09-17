@@ -24,7 +24,7 @@ jobs:
     name: lint & types
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
@@ -41,7 +41,7 @@ jobs:
     name: tests & coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
@@ -66,7 +66,7 @@ jobs:
           else:
               sys.exit("domain/status.py missing from the coverage report")
           PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage
@@ -77,7 +77,7 @@ jobs:
     name: container image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v3
       - name: build
         uses: docker/build-push-action@v6
@@ -109,8 +109,8 @@ jobs:
     name: kubernetes manifests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-kubectl@v4
+      - uses: actions/checkout@v7
+      - uses: azure/setup-kubectl@v5
       - name: install kubeconform
         env:
           KUBECONFORM_VERSION: v0.6.7
@@ -138,11 +138,11 @@ jobs:
     name: secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # A belt-and-braces check for the shapes this project handles, in case gitleaks'
