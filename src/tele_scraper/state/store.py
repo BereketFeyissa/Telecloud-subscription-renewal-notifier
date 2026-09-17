@@ -148,7 +148,13 @@ class SqliteStateStore:
         try:
             await asyncio.to_thread(self._open_sync)
         except (OSError, sqlite3.Error) as exc:
-            raise StateStoreError(f"cannot open state store at {self._path}: {exc}") from exc
+            # The default path is the container's PVC mount point, so this is what a first local
+            # run hits. Say how to fix it rather than just reporting errno 13.
+            raise StateStoreError(
+                f"cannot open state store at {self._path}: {exc}. "
+                "Set STATE_DSN to a writable path - the default is where the PVC mounts inside "
+                "the container, not somewhere a workstation can write"
+            ) from exc
 
     def _open_sync(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
