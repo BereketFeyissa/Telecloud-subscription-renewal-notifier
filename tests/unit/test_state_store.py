@@ -190,3 +190,13 @@ async def test_a_store_created_before_acknowledgements_is_migrated(tmp_path: Pat
     await record_with_ack(store, "comp-1|EXPIRED|-", "fp1")
     assert await store.find_fingerprint("comp-1|EXPIRED|-") == "fp1"
     await store.close()
+
+
+async def test_an_unwritable_path_says_how_to_fix_it(tmp_path: Path) -> None:
+    """The default STATE_DSN is the container's PVC mount, so this is the first-run experience."""
+    blocked = tmp_path / "blocked"
+    blocked.write_text("a file, so it cannot become a directory")
+    store = SqliteStateStore(blocked / "nested" / "state.sqlite3")
+    with pytest.raises(StateStoreError) as excinfo:
+        await store.open()
+    assert "STATE_DSN" in str(excinfo.value), "the error must name the setting that fixes it"
