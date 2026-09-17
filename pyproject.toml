@@ -18,7 +18,7 @@ tele-scraper = "tele_scraper.__main__:main"
 
 [dependency-groups]
 dev = [
-    "pytest>=8.3,<9",
+    "pytest>=8.3,<10",
     "pytest-asyncio>=0.24,<2",
     "pytest-cov>=5.0,<7",
     "respx>=0.21,<0.23",
