@@ -1,14 +1,20 @@
 # tele_scraper
 
-Scrapes the telecom self-service portal, determines whether each purchased **telecloud
-component** is active based on its **validity period** and **expiration time**, and notifies
-multiple recipients across multiple channels. Runs as a long-lived Deployment on Kubernetes.
+Watches the purchased **telecloud components** on Ethio Telecom's self-service portal and tells
+people before one lapses — by email, Telegram, Slack or Discord.
 
 This is an **alerting system**. A missed or wrong alert is a production incident, so the design
 prefers loud failure over quiet optimism: nothing is ever reported healthy on the strength of
 missing data.
 
-Engineering rules for this repository are in [CLAUDE.md](CLAUDE.md), which is authoritative.
+Engineering rules are in [CLAUDE.md](CLAUDE.md), which is authoritative and outranks this file.
+
+## Why it exists
+
+The portal reports `status: "Active"` for **every** component — including ones whose
+`expirationTime` passed days earlier. Trusting that field would mean never noticing an expiry.
+So the status is derived from the expiry date alone, and the portal's own opinion is recorded
+but never allowed to decide.
 
 ## Status model
 
@@ -16,31 +22,43 @@ Derived per component, first match wins:
 
 | Status | Meaning |
 |---|---|
-| `SUSPENDED` | The portal explicitly reports a terminating/inactive state. |
+| `SUSPENDED` | The portal explicitly reports a terminating state (see `PORTAL_SUSPENDED_TOKENS`). |
 | `UNKNOWN` | Expiry missing, unparseable, or not timezone-aware. **Always alerts.** |
 | `EXPIRED` | `expires_at <= now`. |
 | `EXPIRING_SOON` | Inside the warning ladder (default 14d, 7d, 3d, 1d, 12h). |
 | `ACTIVE` | Valid, beyond every rung. The quiet state; never notified on. |
 
-Two rules carry most of the safety:
+Four rules carry most of the safety:
 
 - **`UNKNOWN` is never collapsed into `ACTIVE` or skipped.** Absence of evidence is not evidence
   of health.
 - **A scrape returning zero components is a run-level `UNKNOWN`**, not a clean bill of health.
+- **A component that disappears from the listing is raised**, not silently dropped — a deletion
+  and an incomplete listing look identical from here, so a human decides.
+- **The service watches its own login.** An expired portal password does not degrade this
+  service, it silences it, and the resulting absence of alerts looks like good news.
 
-Each rung of the ladder fires once per component per recipient per channel. Dedup keys on
-`(recipient, channel, address, component_id, status, rung)` and only the latest state is kept,
-so a component that recovers and degrades again alerts again.
+## Alerts repeat until someone confirms them
+
+An unconfirmed alert is re-sent **every run**. Confirming is what stops it — not elapsed time.
+
+- Telegram messages carry a **✅ Confirm** button. The bot polls Telegram (`getUpdates`), so this
+  works **outbound-only**: no webhook, no Ingress, no public endpoint.
+- `--ack <component_id> --by <name>` does the same from the command line, and is the fallback
+  for recipients on email, Slack or Discord who cannot confirm in-channel.
+- A confirmation is scoped to one `(component, status, rung)`, clears it for **every** recipient,
+  lapses if the underlying data changes, and expires after `ACK_TTL_DAYS` (default 7). An ack is
+  a snooze, never permanent silence.
 
 ## Notification channels
 
-`email`, `telegram`, `slack`, `discord`, `sms` — chosen **per recipient**, and one recipient may
-receive on several at once. Routing is configuration (a JSON table in a ConfigMap), never code:
-adding a person or a channel needs no code change.
+`email`, `telegram`, `slack`, `discord` — chosen **per recipient**, and one recipient may receive
+on several at once. Routing is configuration ([routes.json](deploy/base/routes.json) in a
+ConfigMap), never code: adding a person or a channel needs no code change.
 
-`sms` is not implemented: the provider has not been chosen. Routes may name it, but a delivery
-attempt fails loudly rather than silently dropping an alert. See
-[sms.py](src/tele_scraper/notify/sms.py) for what is needed.
+`sms` is declared but **not implemented** — no provider has been chosen. A route may name it, but
+a delivery attempt fails loudly rather than silently dropping an alert. See
+[sms.py](src/tele_scraper/notify/sms.py) for what is still needed.
 
 ## Quick start
 
@@ -48,70 +66,54 @@ attempt fails loudly rather than silently dropping an alert. See
 make install                 # uv sync --frozen --all-groups
 cp .env.example .env         # then fill in the SECRET-marked values
 make check-config            # validate settings and the routing table
-make dry-run                 # one cycle: scrape, evaluate, log intended sends, deliver nothing
+make dry-run                 # one cycle: evaluate everything, log intended sends, deliver nothing
 make check                   # the gate: ruff + mypy + pytest + coverage
 ```
 
 Nothing is ever delivered unless `NOTIFY_ENABLED=true`. The default is `false`.
 
-## What is not built yet
+## Commands
 
-The portal's real structure has not been supplied, and guessing selectors was deliberately
-refused (CLAUDE.md §0). Two modules are therefore explicit, loudly-failing seams:
+| Command | Purpose |
+|---|---|
+| `make run` | The long-running service: scheduler plus the Telegram ack listener. |
+| `make once` | A single cycle; exits with that cycle's code. |
+| `make dry-run` | Evaluate and log intended notifications, send nothing. |
+| `make check-config` | Validate settings and routing, then exit. |
+| `make test-notify` | Send one test message to every recipient and channel. Needs `NOTIFY_ENABLED=true`. |
+| `make telegram-chats` | List chat ids that have messaged the bot, for the routing table. |
+| `python -m tele_scraper --ack <id> --by <name>` | Confirm outstanding alerts for a component. |
+| `python -m tele_scraper --capture <path>` | Save a raw portal response, for diagnosing markup changes. |
 
-- [`scraper/client.py`](src/tele_scraper/scraper/client.py) — `login()` needs the real auth flow.
-- [`scraper/parser.py`](src/tele_scraper/scraper/parser.py) — needs a redacted sample page.
+## How it talks to the portal
 
-Both raise with the exact list of outstanding questions. Everything else — configuration, the
-status ladder, routing, dedup, quiet hours, all four working channels, metrics, health probes,
-the container, and the manifests — is implemented and tested.
+`POST /api/iam/v1/login` returns a JWT valid for about two hours, carried on later requests in a
+`token` header. A fresh one is fetched **per run**, since that lifetime is shorter than the pod's.
 
-## Testing against the real portal
+The password is hashed in the browser and never sent in the clear, so `PORTAL_PASSWORD_HASH`
+takes that digest and replays it: this service never handles the real password, and assumes
+nothing about the hashing algorithm.
 
-The portal's auth flow is not implemented, so `login()` refuses to guess. To reach the real
-site anyway, borrow a session from a logged-in browser:
+A wrong credential arrives as **HTTP 200 with a non-zero `status`**, not a 401. It is treated as
+a credential incident and never retried, so a bad password cannot hammer the account.
 
-1. Log into the portal in your browser, open the components page.
-2. **DevTools → Network → reload →** click the page request → **Request Headers** → copy the
-   entire `Cookie:` value. (Use the Network tab, not `document.cookie` — session cookies are
-   usually `HttpOnly` and will not appear there.)
-3. Put it in `.env` as `PORTAL_SESSION_COOKIE=...`. You do **not** need `PORTAL_USERNAME` or
-   `PORTAL_PASSWORD` for this — startup requires one authentication method, not both. For a
-   token-based portal use `PORTAL_AUTH_HEADER='Bearer ...'` instead.
-
-   Split the page URL so the host and the path are separate:
-
-   ```
-   # https://portal.example/market/my-space/renewals
-   PORTAL_BASE_URL=https://portal.example
-   PORTAL_COMPONENTS_PATH=/market/my-space/renewals
-   ```
-
-   Putting the whole URL in `PORTAL_BASE_URL` will not work — paths are appended to it, not
-   replaced. Alternatively skip both and pass the full URL to `--url`.
-4. Capture it:
-
-```bash
-uv run python -m tele_scraper --capture tests/fixtures/components
-# optionally target a different path:
-uv run python -m tele_scraper --capture out --url /api/v2/components
-```
-
-It saves the raw response and tells you what the portal serves — `json`, `html`,
-`login_page` (the session was not accepted; grab a fresh cookie), or `unknown`. That verdict
-is the observation that decides the scraper's design.
-
-**Redact the saved file** — account numbers, MSISDNs, names, emails — before sharing it. Leave
-element structure, class names, date strings and status wording intact; those are what the
-parser reads.
-
-`--capture` is read-only: no parsing, no state store, no notifications.
+Components come from `GET /api/cbp/thirdapi/v1/renewal_service/renewlist`, paginated. One trap
+worth knowing: the response's `validityPeriod` is **time remaining**, not the purchased duration
+— it goes negative once a component lapses — so it is deliberately never used to derive an expiry.
 
 ## Operations
 
-Deployment, credential rotation, and day-to-day changes: [deploy/README.md](deploy/README.md).
+Deployment, releases, credential rotation and day-to-day changes:
+[deploy/README.md](deploy/README.md).
 
 Metrics are scraped from `/metrics` on port 9100. The series that matters most is
 `scrape_last_success_timestamp_seconds` — **alert on its staleness**. A scheduler that has
-quietly stopped is this system's worst failure mode, because it looks exactly like "nothing is
-wrong".
+quietly stopped looks exactly like "nothing is wrong".
+
+## Contributing
+
+`main` is protected: all five CI checks must pass and the branch must be up to date, enforced on
+administrators too. Every change goes through a pull request.
+
+Run `make check` before pushing — CI runs the same gate plus the image build, manifest validation
+and a secret scan.
