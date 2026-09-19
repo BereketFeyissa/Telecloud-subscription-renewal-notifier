@@ -55,10 +55,47 @@ An unconfirmed alert is re-sent **every run**. Confirming is what stops it — n
   lapses if the underlying data changes, and expires after `ACK_TTL_DAYS` (default 7). An ack is
   a snooze, never permanent silence.
 
+Only Telegram can confirm in-channel. That is a deliberate consequence of having no public
+endpoint: Telegram can be polled outbound, whereas Slack and Discord buttons require them to
+call in. Because an ack clears the alert for everyone, a single Telegram recipient — or anyone
+with `--ack` — is enough to quieten a route. A route with **no** Telegram recipient and nobody
+using the CLI will repeat forever.
+
+## One message per component, or one per group
+
+A route chooses with `mode`:
+
+```json
+{ "recipient": "ops", "mode": "summary", "summary_ack": "components" }
+```
+
+`detailed` (the default) sends one message per component. `summary` sends one per **status
+group** — nine components across three channels is eighteen messages in detailed mode and six
+in summary. Statuses are never mixed in one message, because `EXPIRED` ignores quiet hours and
+`EXPIRING_SOON` respects them; a digest is critical if anything in it is; an empty group sends
+nothing.
+
+`summary_ack` decides what confirming a digest acknowledges:
+
+| value | effect |
+|---|---|
+| `components` | acknowledges each item listed, so the digest **shrinks** as items are confirmed |
+| `digest` | acknowledges the set as a unit; changing the set re-sends it in full |
+| `none` | informational; no Confirm button anywhere, repeats every run |
+
 ## Notification channels
 
 `email`, `telegram`, `slack`, `discord` — chosen **per recipient**, and one recipient may receive
-on several at once. Routing is configuration ([routes.json](deploy/base/routes.json) in a
+on several at once.
+
+| channel | delivers | can confirm in-channel |
+|---|---|---|
+| telegram | yes | **yes** — inline Confirm button, polled outbound |
+| email | yes | no — text only, use `--ack` |
+| slack | yes | no — text only, use `--ack` |
+| discord | yes | no — text only, use `--ack` |
+| sms | **no** — provider undecided | no |
+ Routing is configuration ([routes.json](deploy/base/routes.json) in a
 ConfigMap), never code: adding a person or a channel needs no code change.
 
 `sms` is declared but **not implemented** — no provider has been chosen. A route may name it, but
