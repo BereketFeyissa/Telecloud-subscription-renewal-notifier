@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from freezegun import freeze_time
 
 from tele_scraper.domain.rules import parse_thresholds
 from tele_scraper.models import Status
@@ -28,6 +29,14 @@ FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "renewlist.json"
 #: The fixture is written relative to this instant: one entry is long-lived, one is inside the
 #: warning ladder, one lapsed two days ago, one has no expiry, one has no id.
 NOW = datetime(2026, 9, 17, 8, 0, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def _frozen_clock():  # type: ignore[no-untyped-def]
+    """Pin the clock to the instant the redacted fixture is written against (§11.5)."""
+    with freeze_time(NOW):
+        yield
+
 
 ROUTES = json.dumps(
     {
