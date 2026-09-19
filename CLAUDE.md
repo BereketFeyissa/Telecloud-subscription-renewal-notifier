@@ -521,6 +521,13 @@ comes from the `Secret` as a real environment variable.
 9. The dedup state store **MUST** survive a pod restart: a PVC (`ReadWriteOnce`, matching
    `strategy: Recreate`) or an external store. An `emptyDir` state store is forbidden — it
    re-sends every alert on every restart.
+9a. **Known risk, accepted by the user on 2026-09-17.** Production uses `csi-obs-retain`, which
+   is object storage mounted through FUSE rather than a POSIX block device. SQLite's WAL mode
+   is documented as not working over network filesystems, and FUSE object mounts typically do
+   not provide POSIX advisory locking. If the store misbehaves the symptom is `database is
+   locked` / `disk I/O error`, and §8.2 then fails the run closed — meaning **no alerts at
+   all**, not an alert storm. `csi-disk` (EVS block storage) is the correct substrate if this
+   proves unreliable; a `csi-disk-retain` StorageClass preserves the Retain semantics.
 10. Kustomize `base/` + `overlays/dev|prod`. Environment differences live **only** in overlays.
    No `kubectl edit`, no imperative cluster mutation as part of a delivered change.
 11. Scaling past one replica **MUST NOT** happen without leader election or a distributed lock
