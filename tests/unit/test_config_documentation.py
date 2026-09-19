@@ -83,3 +83,21 @@ def test_behaviour_changing_settings_are_explained_not_merely_listed(setting: st
     assert setting.replace("_", " ") in text or setting in text, (
         f"{setting} changes notification behaviour but is not explained in CLAUDE.md"
     )
+
+
+def test_the_package_version_has_a_single_source_of_truth() -> None:
+    """`__version__` is derived from metadata, not a second hard-coded copy.
+
+    pyproject said 0.1.0 while v0.2.0 was tagged and released, because the version lived in two
+    places and only one ever got updated. Deriving it removes the drift rather than testing for
+    it, and this asserts the derivation stays in place.
+    """
+    import tomllib
+
+    import tele_scraper
+
+    declared = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    assert tele_scraper.__version__ == declared
+    assert '__version__ = "' not in (ROOT / "src" / "tele_scraper" / "__init__.py").read_text(), (
+        "__version__ must be derived from package metadata, not hard-coded"
+    )
