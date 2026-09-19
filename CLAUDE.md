@@ -315,7 +315,9 @@ Routing shape (one route per recipient; a recipient may have several channels):
       "statuses": ["EXPIRED", "EXPIRING_SOON", "UNKNOWN", "SUSPENDED"],
       "components": ["*"],
       "locale": "en",
-      "quiet_hours": null
+      "quiet_hours": null,
+      "mode": "detailed",
+      "summary_ack": "components"
     },
     {
       "recipient": "billing-owner",
@@ -323,7 +325,9 @@ Routing shape (one route per recipient; a recipient may have several channels):
       "statuses": ["EXPIRING_SOON", "EXPIRED"],
       "components": ["*"],
       "locale": "am",
-      "quiet_hours": {"start": "22:00", "end": "06:00", "tz": "Africa/Addis_Ababa"}
+      "quiet_hours": {"start": "22:00", "end": "06:00", "tz": "Africa/Addis_Ababa"},
+      "mode": "summary",
+      "summary_ack": "components"
     }
   ]
 }
@@ -354,6 +358,14 @@ Rules:
      webhook, no ingress) and `--ack <component_id> --by <name>` as the universal fallback.
    Backend is configurable; default is a PVC-backed SQLite file, overridable to Redis.
    If the state store is unreachable, **fail the run** — do not fall back to "send everything".
+2b. **Message mode**, per route. `detailed` (the default) sends one message per component.
+   `summary` sends one per **status group** — never a single mixed message, because `EXPIRED`
+   ignores quiet hours and `EXPIRING_SOON` does not, and one message cannot honour both. A
+   digest is critical if anything in it is, so grouping can never downgrade an expiry. An empty
+   group produces no message. `summary_ack` decides what a digest's Confirm button means:
+   `components` acknowledges each item listed, so the digest **shrinks** as they are confirmed;
+   `digest` acknowledges the set as a unit and re-sends in full if the set changes; `none`
+   offers no button and repeats every run.
 3. A partial delivery failure **MUST NOT** abort the remaining sends. Collect results, log each,
    and exit non-zero if any critical delivery failed.
 4. `EXPIRED` and `UNKNOWN` are **critical** and ignore quiet hours. `EXPIRING_SOON` respects them.

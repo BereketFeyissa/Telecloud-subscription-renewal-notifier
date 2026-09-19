@@ -28,6 +28,7 @@ from tele_scraper.models import (
     DeliveryResult,
     Evaluation,
     NotificationEvent,
+    Status,
 )
 from tele_scraper.notify.base import MessageRenderer, Notifier
 from tele_scraper.observability import metrics
@@ -66,28 +67,54 @@ class Router:
         self._renderer = renderer
         self._semaphore = asyncio.Semaphore(concurrency)
 
+    def _matching(self, route: Route, evaluations: list[Evaluation]) -> list[Evaluation]:
+        """Evaluations this route cares about, in input order."""
+        return [
+            e
+            for e in evaluations
+            if e.status in NOTIFIABLE_STATUSES
+            and e.status in route.statuses
+            and matches_component(route.components, e.component.component_id, e.component.name)
+        ]
+
     def plan(self, evaluations: list[Evaluation]) -> list[NotificationEvent]:
         """Expand evaluations into the full set of intended deliveries.
+
+        A ``detailed`` route produces one message per component; a ``summary`` route produces
+        one per status group. Grouping by status rather than lumping everything into a single
+        message keeps criticality intact: EXPIRED ignores quiet hours and EXPIRING_SOON does
+        not, and one mixed message could not honour both.
+
+        A status with nothing in it produces no message at all - silence when nothing is wrong.
 
         Pure with respect to I/O, so it can be asserted on directly in tests.
         """
         events: list[NotificationEvent] = []
-        for evaluation in evaluations:
-            if evaluation.status not in NOTIFIABLE_STATUSES:
+        for route in self._settings.routing.routes:
+            matched = self._matching(route, evaluations)
+            if not matched:
                 continue
-            component = evaluation.component
-            for route in self._settings.routing.routes:
-                if evaluation.status not in route.statuses:
-                    continue
-                if not matches_component(route.components, component.component_id, component.name):
-                    continue
+            locale = route.locale or self._settings.default_locale
+
+            groups: list[tuple[Evaluation, ...]]
+            if route.mode == "detailed":
+                groups = [(e,) for e in matched]
+            else:
+                by_status: dict[Status, list[Evaluation]] = {}
+                for e in matched:
+                    by_status.setdefault(e.status, []).append(e)
+                groups = [tuple(v) for v in by_status.values()]
+
+            for group in groups:
                 for target in route.targets():
                     events.append(
                         NotificationEvent(
-                            evaluation=evaluation,
+                            evaluations=group,
                             recipient=route.recipient,
                             target=target,
-                            locale=route.locale or self._settings.default_locale,
+                            locale=locale,
+                            digest=route.mode == "summary",
+                            ack_mode=route.summary_ack,
                         )
                     )
         return events
@@ -100,15 +127,9 @@ class Router:
 
     @staticmethod
     def _scope(event: NotificationEvent) -> str:
-        """Dedup scope: one row per recipient, channel, address and component."""
-        return "|".join(
-            (
-                event.recipient,
-                event.target.channel,
-                event.target.address,
-                event.evaluation.component.component_id,
-            )
-        )
+        """Dedup scope: one row per recipient, channel, address and component (or digest)."""
+        subject = event.digest_key if event.digest else event.evaluation.component.component_id
+        return "|".join((event.recipient, event.target.channel, event.target.address, subject))
 
     async def dispatch(
         self, evaluations: list[Evaluation], *, now: datetime
@@ -148,18 +169,52 @@ class Router:
                 collected.append(outcome)
         return collected
 
+    async def _apply_acknowledgements(self, event: NotificationEvent) -> NotificationEvent | None:
+        """Drop what has already been confirmed; None when nothing is left to say.
+
+        For a detailed message this is all-or-nothing. For a digest it depends on the route's
+        ``summary_ack``:
+
+        * ``components`` - confirmed items are filtered out, so the digest **shrinks** as
+          people work through it rather than re-listing what they have already handled.
+        * ``digest`` - the set is acknowledged as a unit; changing the set lapses the ack and
+          the whole group is sent again.
+        * ``none`` - nothing is ever suppressed; the digest repeats every run by design.
+        """
+        now = time.time()
+        if event.digest and event.ack_mode == "none":
+            return event
+
+        if event.digest and event.ack_mode == "digest":
+            if await self._store.is_acknowledged(
+                event.digest_key, event.digest_fingerprint, now=now
+            ):
+                return None
+            return event
+
+        surviving = [
+            e
+            for e in event.evaluations
+            if not await self._store.is_acknowledged(e.ack_key, e.component.fingerprint, now=now)
+        ]
+        if not surviving:
+            return None
+        if len(surviving) == len(event.evaluations):
+            return event
+        return event.model_copy(update={"evaluations": tuple(surviving)})
+
     async def _deliver(self, event: NotificationEvent, *, now: datetime) -> DeliveryResult:
+        original = event
         component_id = event.evaluation.component.component_id
         scope = self._scope(event)
 
-        evaluation = event.evaluation
         if self._settings.require_acknowledgement:
             # Repeat every run until a human confirms. Acknowledgement, not elapsed time, is
             # what stops an alert (CLAUDE.md §8.2a).
-            if await self._store.is_acknowledged(
-                evaluation.ack_key, evaluation.component.fingerprint, now=time.time()
-            ):
-                return _suppressed(event, "acknowledged")
+            remaining = await self._apply_acknowledgements(event)
+            if remaining is None:
+                return _suppressed(original, "acknowledged")
+            event = remaining
         elif await self._store.already_sent(scope, event.dedup_key):
             return _suppressed(event, "dedup")
 
@@ -167,7 +222,7 @@ class Router:
         quiet = route.quiet_hours if route is not None else None
         if (
             quiet is not None
-            and not event.evaluation.is_critical
+            and not event.is_critical
             and in_quiet_hours(now, quiet.start, quiet.end, quiet.tz)
         ):
             log.info(
@@ -231,11 +286,17 @@ class Router:
                 recipient=event.recipient,
                 channel=event.target.channel,
                 component_id=component_id,
-                status=event.evaluation.status.value,
+                status=event.status.value,
                 rung=event.evaluation.rung_key,
-                ack_key=event.evaluation.ack_key,
-                fingerprint=event.evaluation.component.fingerprint,
+                ack_key=event.ack_key,
+                fingerprint=event.ack_fingerprint,
             )
+            if event.digest and event.ack_mode == "components":
+                # The Confirm button can only carry the digest's identity, so remember what it
+                # listed in order to expand a press into per-component acknowledgements.
+                await self._store.record_digest_members(
+                    event.digest_key, event.members(), now=time.time()
+                )
             log.info(
                 "router.sent",
                 recipient=event.recipient,

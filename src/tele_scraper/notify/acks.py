@@ -28,6 +28,10 @@ log = get_logger(__name__)
 OFFSET_KEY = "__telegram_offset__"
 
 
+#: Digest ack keys look like ``__digest__|EXPIRED`` and have two parts, not three.
+DIGEST_PREFIX = "__digest__"
+
+
 def parse_ack_key(callback_data: str) -> str | None:
     """Extract the acknowledged situation from a callback payload.
 
@@ -39,6 +43,8 @@ def parse_ack_key(callback_data: str) -> str | None:
         return None
     ack_key = callback_data[len(ACK_PREFIX) :]
     parts = ack_key.split("|")
+    if ack_key.startswith(DIGEST_PREFIX):
+        return ack_key if len(parts) == 2 and parts[1] else None
     if len(parts) != 3 or not all(parts[:2]):
         return None
     return ack_key
@@ -104,22 +110,72 @@ class TelegramAckListener:
                 timeout=self._settings.notify_timeout_seconds,
             )
 
+    async def _record_digest(self, ack_key: str, acked_by: str, fingerprint: str) -> bool:
+        """Confirm a digest, expanding to its members when the route asked for that.
+
+        Membership was recorded when the digest was sent, because Telegram's 64-byte
+        callback_data cannot carry a list of components.
+        """
+        members = await self._store.find_digest_members(ack_key)
+        ttl = self._settings.ack_ttl_days * 86400
+        now = time.time()
+
+        if not members:
+            # No membership recorded means the route acknowledges the set as a unit.
+            await self._store.acknowledge(
+                ack_key,
+                component_id=ack_key,
+                status=ack_key.split("|")[-1],
+                rung="-",
+                fingerprint=fingerprint,
+                acked_by=acked_by,
+                ttl_seconds=ttl,
+                now=now,
+            )
+            metrics.ACKNOWLEDGEMENTS.labels(channel="telegram").inc()
+            log.info("ack.recorded", ack_key=ack_key, acked_by=acked_by, members=0)
+            return True
+
+        for member_key, member_fp in members:
+            component_id, status, rung = member_key.split("|")
+            await self._store.acknowledge(
+                member_key,
+                component_id=component_id,
+                status=status,
+                rung=rung,
+                fingerprint=member_fp,
+                acked_by=acked_by,
+                ttl_seconds=ttl,
+                now=now,
+            )
+        metrics.ACKNOWLEDGEMENTS.labels(channel="telegram").inc()
+        log.info(
+            "ack.recorded",
+            ack_key=ack_key,
+            acked_by=acked_by,
+            members=len(members),
+            channel="telegram",
+        )
+        return True
+
     async def _record(self, ack_key: str, acked_by: str) -> bool:
+        fingerprint = await self._store.find_fingerprint(ack_key)
+        if fingerprint is None:
+            log.warning("ack.unknown_situation", ack_key=ack_key)
+            return False
+        if ack_key.startswith(DIGEST_PREFIX):
+            return await self._record_digest(ack_key, acked_by, fingerprint)
         component_id, status, rung = ack_key.split("|")
         # The fingerprint is unknown here - the button carries only the situation - so the ack
         # is stored against the current one by re-deriving it on the next run. Storing the key
         # with a wildcard fingerprint would let an ack survive a data change, which §8.2a
         # forbids, so instead we record the fingerprint the alert was sent with.
-        fingerprints = await self._store.find_fingerprint(ack_key)
-        if fingerprints is None:
-            log.warning("ack.unknown_situation", ack_key=ack_key)
-            return False
         await self._store.acknowledge(
             ack_key,
             component_id=component_id,
             status=status,
             rung=rung,
-            fingerprint=fingerprints,
+            fingerprint=fingerprint,
             acked_by=acked_by,
             ttl_seconds=self._settings.ack_ttl_days * 86400,
             now=time.time(),

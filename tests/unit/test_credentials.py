@@ -137,7 +137,7 @@ def test_a_credential_message_does_not_call_itself_a_telecloud_component(
         update={"kind": "credential", "name": "Portal password (svc)"}
     )
     credential = event.model_copy(
-        update={"evaluation": event.evaluation.model_copy(update={"component": component})}
+        update={"evaluations": (event.evaluation.model_copy(update={"component": component}),)}
     )
     message = renderer.render(credential)
     assert "telecloud component" not in message.subject
@@ -150,7 +150,7 @@ def test_a_credential_message_explains_what_its_expiry_costs(
     event = make_event("email", "ops@example.test")
     component = event.evaluation.component.model_copy(update={"kind": "credential"})
     credential = event.model_copy(
-        update={"evaluation": event.evaluation.model_copy(update={"component": component})}
+        update={"evaluations": (event.evaluation.model_copy(update={"component": component}),)}
     )
     body = renderer.render(credential).body
     assert "you stop receiving these alerts" in body

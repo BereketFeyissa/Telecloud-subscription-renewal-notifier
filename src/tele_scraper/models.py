@@ -9,9 +9,16 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 
 class Status(StrEnum):
@@ -143,18 +150,99 @@ class ChannelTarget(BaseModel):
 
 
 class NotificationEvent(BaseModel):
-    """A single intended delivery: one evaluation, one recipient, one channel."""
+    """One intended delivery to one recipient on one channel.
+
+    Carries a tuple of evaluations rather than a single one: a detailed message holds exactly
+    one, a summary message holds every component in a status group. Constructing with
+    ``evaluation=`` still works and wraps it, so the two modes share one delivery path.
+    """
 
     model_config = ConfigDict(frozen=True)
 
-    evaluation: Evaluation
+    evaluations: tuple[Evaluation, ...] = Field(min_length=1)
     recipient: str
     target: ChannelTarget
     locale: str = "en"
+    #: True when this message summarises a status group rather than one component.
+    digest: bool = False
+    #: Only meaningful for a digest. See Route.summary_ack.
+    ack_mode: Literal["components", "digest", "none"] = "components"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_single_evaluation(cls, data: Any) -> Any:
+        """Allow ``evaluation=`` as shorthand for a one-item message."""
+        if isinstance(data, dict) and "evaluation" in data and "evaluations" not in data:
+            data = {**data, "evaluations": (data.pop("evaluation"),)}
+        return data
+
+    @property
+    def evaluation(self) -> Evaluation:
+        """The first evaluation. For a detailed message this is the only one."""
+        return self.evaluations[0]
+
+    @property
+    def status(self) -> Status:
+        """The status this message is about. A digest groups a single status."""
+        return self.evaluations[0].status
+
+    @property
+    def is_critical(self) -> bool:
+        """Critical if anything in the message is, so a digest never downgrades an EXPIRED."""
+        return any(e.is_critical for e in self.evaluations)
+
+    @property
+    def digest_key(self) -> str:
+        """Identifies this digest: the recipient-independent status group it represents.
+
+        Deliberately excludes the member set, so the same group keeps one identity as items
+        come and go. The *set* is what the fingerprint captures.
+        """
+        return f"__digest__|{self.status.value}"
+
+    @property
+    def digest_fingerprint(self) -> str:
+        """Digest of exactly which situations this message listed.
+
+        In ``digest`` ack mode this is what a confirmation is recorded against, so adding or
+        removing a component lapses the ack and the group is sent again in full.
+        """
+        material = "|".join(
+            sorted(f"{e.ack_key}@{e.component.fingerprint}" for e in self.evaluations)
+        )
+        return hashlib.sha256(material.encode()).hexdigest()[:16]
+
+    @property
+    def ack_key(self) -> str:
+        """What a confirmation on this message is recorded against.
+
+        One key whether the message is detailed or a digest, so the router and the ack
+        listener do not each need to know which kind they are holding.
+        """
+        return self.digest_key if self.digest else self.evaluations[0].ack_key
+
+    @property
+    def ack_fingerprint(self) -> str:
+        """The facts this message showed, against which a confirmation is recorded."""
+        return self.digest_fingerprint if self.digest else self.evaluations[0].component.fingerprint
+
+    def members(self) -> list[tuple[str, str]]:
+        """``(ack_key, fingerprint)`` for every situation listed in this message."""
+        return [(e.ack_key, e.component.fingerprint) for e in self.evaluations]
 
     @property
     def dedup_key(self) -> str:
         """``(component_id, status, rung)`` scoped per recipient and channel (CLAUDE.md §8.2)."""
+        if self.digest:
+            return "|".join(
+                (
+                    self.recipient,
+                    self.target.channel,
+                    self.target.address,
+                    self.digest_key,
+                    self.digest_fingerprint,
+                )
+            )
         e = self.evaluation
         return "|".join(
             (

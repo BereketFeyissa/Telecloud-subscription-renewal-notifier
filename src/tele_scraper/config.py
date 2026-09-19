@@ -115,6 +115,14 @@ class Route(BaseModel):
     components: tuple[str, ...] = ("*",)
     locale: str = "en"
     quiet_hours: QuietHours | None = None
+    #: ``detailed`` sends one message per component; ``summary`` sends one per status group.
+    #: Defaults to detailed so existing routes keep behaving exactly as before.
+    mode: Literal["detailed", "summary"] = "detailed"
+    #: What the Confirm button on a summary message acknowledges.
+    #: ``components`` - each item listed, so the next digest only shows what is still
+    #: outstanding. ``digest`` - the set as a unit, re-sending in full if it changes.
+    #: ``none`` - informational, no button, repeats every run.
+    summary_ack: Literal["components", "digest", "none"] = "components"
 
     @field_validator("statuses")
     @classmethod

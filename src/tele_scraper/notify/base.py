@@ -103,12 +103,19 @@ class MessageRenderer:
         )
         self._env.filters["humanize"] = humanize
 
-    def _pick(self, locale: str, channel: str, part: str) -> str:
-        candidates = (
-            f"{locale}/{channel}.{part}.j2",
-            f"{locale}/default.{part}.j2",
-            f"{self._default_locale}/{channel}.{part}.j2",
-            f"{self._default_locale}/default.{part}.j2",
+    def _pick(self, locale: str, channel: str, part: str, *, digest: bool = False) -> str:
+        """Template lookup, most specific first, falling back to the default locale.
+
+        A digest looks for ``<channel>.digest.<part>.j2`` before the per-component template, so
+        a channel can render a group differently without every channel needing to.
+        """
+        prefixes = (
+            (f"{channel}.digest", "digest", channel, "default") if digest else (channel, "default")
+        )
+        candidates = tuple(
+            f"{loc}/{prefix}.{part}.j2"
+            for loc in (locale, self._default_locale)
+            for prefix in prefixes
         )
         for name in candidates:
             try:
@@ -128,6 +135,7 @@ class MessageRenderer:
         """
         evaluation = event.evaluation
         component = evaluation.component
+        tz = self._tz
         expires_local: datetime | None = (
             component.expires_at.astimezone(self._tz) if component.expires_at else None
         )
@@ -154,6 +162,27 @@ class MessageRenderer:
             "portal_status": component.portal_status or "unknown",
             "is_credential": component.kind == "credential",
             "evaluated_at": evaluation.evaluated_at,
+            "is_digest": event.digest,
+            "count": len(event.evaluations),
+            # Every item in the group, pre-formatted so templates stay free of date logic.
+            "items": [
+                {
+                    "component_id": e.component.component_id,
+                    "name": e.component.label,
+                    "status": e.status.value,
+                    "is_credential": e.component.kind == "credential",
+                    "expires_display": (
+                        e.component.expires_at.astimezone(tz).strftime("%Y-%m-%d %H:%M %Z (UTC%z)")
+                        if e.component.expires_at
+                        else "unknown"
+                    ),
+                    "remaining_display": (
+                        humanize(e.remaining) if e.remaining is not None else "unknown"
+                    ),
+                    "reason": e.reason,
+                }
+                for e in event.evaluations
+            ],
         }
 
     def render(self, event: NotificationEvent) -> RenderedMessage:
@@ -161,8 +190,12 @@ class MessageRenderer:
         ctx = self.context(event)
         locale = event.locale or self._default_locale
         channel = event.target.channel
-        subject = self._env.get_template(self._pick(locale, channel, "subject")).render(**ctx)
-        body = self._env.get_template(self._pick(locale, channel, "body")).render(**ctx)
+        subject = self._env.get_template(
+            self._pick(locale, channel, "subject", digest=event.digest)
+        ).render(**ctx)
+        body = self._env.get_template(
+            self._pick(locale, channel, "body", digest=event.digest)
+        ).render(**ctx)
         return RenderedMessage(subject=subject.strip(), body=body.strip())
 
 

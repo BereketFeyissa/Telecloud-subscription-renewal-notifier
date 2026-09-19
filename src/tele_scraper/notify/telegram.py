@@ -67,8 +67,8 @@ class TelegramNotifier:
             "parse_mode": "Markdown",
             "disable_web_page_preview": True,
         }
-        if self._offer_ack:
-            callback = ack_callback_data(event.evaluation.ack_key)
+        if self._offer_ack and not (event.digest and event.ack_mode == "none"):
+            callback = ack_callback_data(event.ack_key)
             if callback is not None:
                 payload["reply_markup"] = {
                     "inline_keyboard": [

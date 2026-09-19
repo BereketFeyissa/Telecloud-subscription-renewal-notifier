@@ -1,0 +1,10 @@
+{% if is_critical %}🔴{% else %}🟠{% endif %} *{{ status }}* — {{ count }} component{{ 's' if count != 1 else '' }}
+
+{% for item in items %}
+• *{{ item.name }}*
+  `{{ item.component_id }}`
+  {{ item.expires_display }} · {{ item.remaining_display }}
+{% endfor %}
+{% if status == 'UNKNOWN' %}
+_Not confirmed active — check the portal._
+{% endif %}

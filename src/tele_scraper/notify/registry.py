@@ -136,7 +136,7 @@ def build_test_event(recipient: str, target: ChannelTarget, locale: str) -> Noti
         reason="this is a configuration test, not a real alert",
     )
     return NotificationEvent(
-        evaluation=evaluation, recipient=recipient, target=target, locale=locale
+        evaluations=(evaluation,), recipient=recipient, target=target, locale=locale
     )
 
 

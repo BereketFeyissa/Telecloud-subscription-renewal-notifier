@@ -23,6 +23,14 @@ from typing import Protocol, runtime_checkable
 from tele_scraper.errors import StateStoreError
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS digest_members (
+    digest_key   TEXT NOT NULL,
+    ack_key      TEXT NOT NULL,
+    fingerprint  TEXT NOT NULL,
+    recorded_at  REAL NOT NULL,
+    PRIMARY KEY (digest_key, ack_key)
+);
+
 CREATE TABLE IF NOT EXISTS known_components (
     component_id TEXT PRIMARY KEY,
     name         TEXT NOT NULL,
@@ -96,6 +104,12 @@ class StateStore(Protocol):
     ) -> None: ...
 
     async def find_fingerprint(self, ack_key: str) -> str | None: ...
+
+    async def record_digest_members(
+        self, digest_key: str, members: list[tuple[str, str]], *, now: float
+    ) -> None: ...
+
+    async def find_digest_members(self, digest_key: str) -> list[tuple[str, str]]: ...
 
     async def record_seen(self, components: list[tuple[str, str]], *, now: float) -> None: ...
 
@@ -237,6 +251,52 @@ class SqliteStateStore:
                 await asyncio.to_thread(_write)
             except sqlite3.Error as exc:
                 raise StateStoreError(f"dedup write failed: {exc}") from exc
+
+    async def record_digest_members(
+        self, digest_key: str, members: list[tuple[str, str]], *, now: float
+    ) -> None:
+        """Remember what a digest listed, so confirming it can acknowledge each item.
+
+        Telegram caps ``callback_data`` at 64 bytes, far too little to carry a list of
+        component ids, so the button references the digest and the membership is looked up
+        here. Replaces any previous membership for the same digest.
+        """
+
+        def _write() -> None:
+            conn = self._require()
+            conn.execute("DELETE FROM digest_members WHERE digest_key = ?", (digest_key,))
+            conn.executemany(
+                "INSERT INTO digest_members (digest_key, ack_key, fingerprint, recorded_at) "
+                "VALUES (?, ?, ?, ?)",
+                [(digest_key, ack, fp, now) for ack, fp in members],
+            )
+            conn.commit()
+
+        async with self._lock:
+            try:
+                await asyncio.to_thread(_write)
+            except sqlite3.Error as exc:
+                raise StateStoreError(f"digest membership write failed: {exc}") from exc
+
+    async def find_digest_members(self, digest_key: str) -> list[tuple[str, str]]:
+        """What the most recent digest with this key listed."""
+
+        def _query() -> list[tuple[str, str]]:
+            rows = (
+                self._require()
+                .execute(
+                    "SELECT ack_key, fingerprint FROM digest_members WHERE digest_key = ?",
+                    (digest_key,),
+                )
+                .fetchall()
+            )
+            return [(r[0], r[1]) for r in rows]
+
+        async with self._lock:
+            try:
+                return await asyncio.to_thread(_query)
+            except sqlite3.Error as exc:
+                raise StateStoreError(f"digest membership lookup failed: {exc}") from exc
 
     async def record_seen(self, components: list[tuple[str, str]], *, now: float) -> None:
         """Remember which components the portal listed, so a disappearance can be noticed.
@@ -471,6 +531,7 @@ class MemoryStateStore:
         self._acks: dict[str, tuple[str, float, str]] = {}
         self._sent_fingerprints: dict[str, tuple[str, str, str, str]] = {}
         self._known: dict[str, tuple[str, float]] = {}
+        self._digests: dict[str, list[tuple[str, str]]] = {}
 
     async def already_sent(self, scope: str, dedup_key: str) -> bool:
         row = self._rows.get(scope)
@@ -496,6 +557,14 @@ class MemoryStateStore:
     async def find_fingerprint(self, ack_key: str) -> str | None:
         row = self._sent_fingerprints.get(ack_key)
         return row[0] if row else None
+
+    async def record_digest_members(
+        self, digest_key: str, members: list[tuple[str, str]], *, now: float
+    ) -> None:
+        self._digests[digest_key] = list(members)
+
+    async def find_digest_members(self, digest_key: str) -> list[tuple[str, str]]:
+        return list(self._digests.get(digest_key, []))
 
     async def record_seen(self, components: list[tuple[str, str]], *, now: float) -> None:
         for cid, name in components:
@@ -553,6 +622,7 @@ class MemoryStateStore:
         self._acks.clear()
         self._sent_fingerprints.clear()
         self._known.clear()
+        self._digests.clear()
 
 
 def build_store(backend: str, dsn: Path) -> StateStore:
