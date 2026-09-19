@@ -362,10 +362,16 @@ Rules:
    `summary` sends one per **status group** — never a single mixed message, because `EXPIRED`
    ignores quiet hours and `EXPIRING_SOON` does not, and one message cannot honour both. A
    digest is critical if anything in it is, so grouping can never downgrade an expiry. An empty
-   group produces no message. `summary_ack` decides what a digest's Confirm button means:
+   group produces no message. `summary_ack` decides what confirming a digest acknowledges:
    `components` acknowledges each item listed, so the digest **shrinks** as they are confirmed;
-   `digest` acknowledges the set as a unit and re-sends in full if the set changes; `none`
-   offers no button and repeats every run.
+   `digest` acknowledges the set as a unit and re-sends in full if the set changes; `none` is
+   informational and repeats every run.
+   **The Confirm button itself is Telegram-only** — Slack, Discord, email and SMS are text, and
+   giving them buttons would mean an inbound endpoint this workload deliberately does not have
+   (§14). The suppression each mode describes still applies on *every* channel, because acks
+   are recipient- and channel-independent: one Telegram press, or one `--ack`, clears the
+   alert for everyone. A route whose recipients are all on text-only channels therefore
+   depends on someone with Telegram or CLI access, or it repeats forever.
 3. A partial delivery failure **MUST NOT** abort the remaining sends. Collect results, log each,
    and exit non-zero if any critical delivery failed.
 4. `EXPIRED` and `UNKNOWN` are **critical** and ignore quiet hours. `EXPIRING_SOON` respects them.
