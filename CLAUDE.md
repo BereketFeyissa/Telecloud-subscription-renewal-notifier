@@ -387,6 +387,13 @@ Rules:
 - The app **MUST** fail fast at startup on invalid config, with a message naming the bad variable.
 - `.env.example` **MUST** list every variable with a placeholder and one-line comment, and
   **MUST** be updated in the same commit that adds a setting.
+- **Route fields count too.** Anything inside `NOTIFY_ROUTES_JSON` — `mode`, `summary_ack`,
+  `quiet_hours` and the rest — is not an environment variable, so the rule above never catches
+  it. Every route field **MUST** appear in the `.env.example` routing example *and* in the §8
+  routing shape. This is exactly how `mode` and `summary_ack` shipped undocumented.
+- This is **enforced, not remembered**: `tests/unit/test_config_documentation.py` compares
+  `Settings` and `Route` against `.env.example` and this file, and fails CI on any drift in
+  either direction — a new setting left undocumented, or a removed one still advertised.
 
 Required variables (non-exhaustive; keep this table in sync):
 
@@ -605,7 +612,9 @@ A change is done only when **all** of the following are true:
 - [ ] `mypy --strict` passes.
 - [ ] `pytest` passes; coverage ≥ 85%; `domain/status.py` at 100% branch coverage.
 - [ ] No secret, credential, real recipient, or unredacted HTML added to the repo.
-- [ ] `.env.example` and §9 table updated if any setting changed.
+- [ ] `.env.example` and §9 table updated if any setting changed — including **route fields**
+      inside `NOTIFY_ROUTES_JSON`, which are not environment variables and are easy to miss.
+      `tests/unit/test_config_documentation.py` checks this; do not silence it.
 - [ ] New/changed behavior covered by a test that fails without the change.
 - [ ] Logs and metrics emitted for the new path; exit codes still match §12.
 - [ ] Dockerfile still builds; image runs as non-root with a read-only root filesystem.
