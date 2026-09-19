@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from freezegun import freeze_time
 
 from tele_scraper import runner as runner_module
 from tele_scraper.errors import ParseError, ScrapeError
@@ -16,8 +17,22 @@ from tele_scraper.notify.router import Router
 from tele_scraper.runner import EMPTY_RESULT_ID, Runner
 from tele_scraper.scraper.client import FixturePortalClient
 from tele_scraper.state.store import MemoryStateStore
-from tests.conftest import make_component, make_settings
+from tests.conftest import NOW, make_component, make_settings
 from tests.unit.test_router import FakeNotifier
+
+
+@pytest.fixture(autouse=True)
+def _frozen_clock():  # type: ignore[no-untyped-def]
+    """Pin the clock to the instant the fixtures are written against (CLAUDE.md §11.5).
+
+    Runner calls datetime.now() internally while the components here are built relative to a
+    fixed NOW. Without freezing, these tests quietly change meaning as real time moves: a
+    component created as "expires in 2 days" becomes EXPIRED a few days later, and the suite
+    starts failing on a date rather than on a code change.
+    """
+    with freeze_time(NOW):
+        yield
+
 
 ROUTES = json.dumps(
     {

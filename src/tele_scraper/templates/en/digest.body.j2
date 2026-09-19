@@ -1,0 +1,14 @@
+{{ count }} component{{ 's' if count != 1 else '' }} with status {{ status }}:
+
+{% for item in items %}
+- {{ item.name }} ({{ item.component_id }})
+  expires {{ item.expires_display }} · {{ item.remaining_display }}
+{% if item.reason %}
+  {{ item.reason }}
+{% endif %}
+{% endfor %}
+{% if status == 'UNKNOWN' %}
+These could not be confirmed active. Someone needs to check the portal directly.
+{% endif %}
+
+Checked at {{ evaluated_at.strftime('%Y-%m-%d %H:%M:%S UTC') }} · recipient: {{ recipient }}

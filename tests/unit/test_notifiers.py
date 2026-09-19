@@ -83,7 +83,7 @@ def test_body_carries_everything_section_8_5_requires(renderer) -> None:  # type
 def test_unknown_status_body_says_it_is_not_confirmed_active(renderer) -> None:  # type: ignore[no-untyped-def]
     event = make_event("slack", "https://hooks.test/x")
     unknown = event.model_copy(
-        update={"evaluation": event.evaluation.model_copy(update={"status": Status.UNKNOWN})}
+        update={"evaluations": (event.evaluation.model_copy(update={"status": Status.UNKNOWN}),)}
     )
     assert "not confirmed active" in renderer.render(unknown).body.lower()
 
@@ -92,7 +92,7 @@ def test_derived_expiry_is_called_out(renderer) -> None:  # type: ignore[no-unty
     event = make_event("slack", "https://hooks.test/x")
     component = event.evaluation.component.model_copy(update={"expires_at_derived": True})
     derived = event.model_copy(
-        update={"evaluation": event.evaluation.model_copy(update={"component": component})}
+        update={"evaluations": (event.evaluation.model_copy(update={"component": component}),)}
     )
     assert "derived" in renderer.render(derived).body.lower()
 
@@ -363,7 +363,7 @@ def test_the_email_body_keeps_its_line_breaks(renderer) -> None:  # type: ignore
     """
     event = make_event("email", "ops@example.test")
     with_reason = event.model_copy(
-        update={"evaluation": event.evaluation.model_copy(update={"reason": "inside window"})}
+        update={"evaluations": (event.evaluation.model_copy(update={"reason": "inside window"}),)}
     )
     lines = renderer.render(with_reason).body.splitlines()
     status_lines = [ln for ln in lines if ln.startswith("Status")]

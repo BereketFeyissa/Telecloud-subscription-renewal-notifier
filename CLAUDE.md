@@ -315,7 +315,9 @@ Routing shape (one route per recipient; a recipient may have several channels):
       "statuses": ["EXPIRED", "EXPIRING_SOON", "UNKNOWN", "SUSPENDED"],
       "components": ["*"],
       "locale": "en",
-      "quiet_hours": null
+      "quiet_hours": null,
+      "mode": "detailed",
+      "summary_ack": "components"
     },
     {
       "recipient": "billing-owner",
@@ -323,7 +325,9 @@ Routing shape (one route per recipient; a recipient may have several channels):
       "statuses": ["EXPIRING_SOON", "EXPIRED"],
       "components": ["*"],
       "locale": "am",
-      "quiet_hours": {"start": "22:00", "end": "06:00", "tz": "Africa/Addis_Ababa"}
+      "quiet_hours": {"start": "22:00", "end": "06:00", "tz": "Africa/Addis_Ababa"},
+      "mode": "summary",
+      "summary_ack": "components"
     }
   ]
 }
@@ -354,6 +358,14 @@ Rules:
      webhook, no ingress) and `--ack <component_id> --by <name>` as the universal fallback.
    Backend is configurable; default is a PVC-backed SQLite file, overridable to Redis.
    If the state store is unreachable, **fail the run** — do not fall back to "send everything".
+2b. **Message mode**, per route. `detailed` (the default) sends one message per component.
+   `summary` sends one per **status group** — never a single mixed message, because `EXPIRED`
+   ignores quiet hours and `EXPIRING_SOON` does not, and one message cannot honour both. A
+   digest is critical if anything in it is, so grouping can never downgrade an expiry. An empty
+   group produces no message. `summary_ack` decides what a digest's Confirm button means:
+   `components` acknowledges each item listed, so the digest **shrinks** as they are confirmed;
+   `digest` acknowledges the set as a unit and re-sends in full if the set changes; `none`
+   offers no button and repeats every run.
 3. A partial delivery failure **MUST NOT** abort the remaining sends. Collect results, log each,
    and exit non-zero if any critical delivery failed.
 4. `EXPIRED` and `UNKNOWN` are **critical** and ignore quiet hours. `EXPIRING_SOON` respects them.
@@ -375,6 +387,13 @@ Rules:
 - The app **MUST** fail fast at startup on invalid config, with a message naming the bad variable.
 - `.env.example` **MUST** list every variable with a placeholder and one-line comment, and
   **MUST** be updated in the same commit that adds a setting.
+- **Route fields count too.** Anything inside `NOTIFY_ROUTES_JSON` — `mode`, `summary_ack`,
+  `quiet_hours` and the rest — is not an environment variable, so the rule above never catches
+  it. Every route field **MUST** appear in the `.env.example` routing example *and* in the §8
+  routing shape. This is exactly how `mode` and `summary_ack` shipped undocumented.
+- This is **enforced, not remembered**: `tests/unit/test_config_documentation.py` compares
+  `Settings` and `Route` against `.env.example` and this file, and fails CI on any drift in
+  either direction — a new setting left undocumented, or a removed one still advertised.
 
 Required variables (non-exhaustive; keep this table in sync):
 
@@ -521,6 +540,13 @@ comes from the `Secret` as a real environment variable.
 9. The dedup state store **MUST** survive a pod restart: a PVC (`ReadWriteOnce`, matching
    `strategy: Recreate`) or an external store. An `emptyDir` state store is forbidden — it
    re-sends every alert on every restart.
+9a. **Known risk, accepted by the user on 2026-09-17.** Production uses `csi-obs-retain`, which
+   is object storage mounted through FUSE rather than a POSIX block device. SQLite's WAL mode
+   is documented as not working over network filesystems, and FUSE object mounts typically do
+   not provide POSIX advisory locking. If the store misbehaves the symptom is `database is
+   locked` / `disk I/O error`, and §8.2 then fails the run closed — meaning **no alerts at
+   all**, not an alert storm. `csi-disk` (EVS block storage) is the correct substrate if this
+   proves unreliable; a `csi-disk-retain` StorageClass preserves the Retain semantics.
 10. Kustomize `base/` + `overlays/dev|prod`. Environment differences live **only** in overlays.
    No `kubectl edit`, no imperative cluster mutation as part of a delivered change.
 11. Scaling past one replica **MUST NOT** happen without leader election or a distributed lock
@@ -586,7 +612,9 @@ A change is done only when **all** of the following are true:
 - [ ] `mypy --strict` passes.
 - [ ] `pytest` passes; coverage ≥ 85%; `domain/status.py` at 100% branch coverage.
 - [ ] No secret, credential, real recipient, or unredacted HTML added to the repo.
-- [ ] `.env.example` and §9 table updated if any setting changed.
+- [ ] `.env.example` and §9 table updated if any setting changed — including **route fields**
+      inside `NOTIFY_ROUTES_JSON`, which are not environment variables and are easy to miss.
+      `tests/unit/test_config_documentation.py` checks this; do not silence it.
 - [ ] New/changed behavior covered by a test that fails without the change.
 - [ ] Logs and metrics emitted for the new path; exit codes still match §12.
 - [ ] Dockerfile still builds; image runs as non-root with a read-only root filesystem.
