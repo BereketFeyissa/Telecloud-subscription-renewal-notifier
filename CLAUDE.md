@@ -262,6 +262,14 @@ Hard rules:
   Each rung fires **at most once** per component per cycle (see §8 dedup).
 - A scrape that returns **zero components** is `UNKNOWN` for the whole run, not "all fine".
   Empty result ⇒ alert operators, exit non-zero.
+- A scrape that **fails outright** — the portal is unreachable, DNS fails, the credential is
+  rejected — is likewise `UNKNOWN` and **alerts**. It used to set an exit code and tell nobody,
+  which meant the system was blind and silent for a whole interval; silence is
+  indistinguishable from good news, and this is the most severe case, not the least. The
+  message states when the next attempt is due, because the recipient's first question is
+  whether anything is still trying. The scheduler retries on `RETRY_BACKOFF_SECONDS`, doubling
+  to a cap, rather than sleeping the full interval — a pod that loses its first cycle to a
+  startup race would otherwise stay blind until the next scheduled run.
 - **Our own credentials are watched too** (`MONITOR_CREDENTIALS`, default on). The login
   response returns `passwordExpiryDate` and `expiredDate`, so they cost no extra request. They
   become synthetic components (`kind="credential"`) and run through this same ladder — but on
@@ -426,6 +434,7 @@ Required variables (non-exhaustive; keep this table in sync):
 | `MONITOR_CREDENTIALS` / `MONITOR_ACCOUNT_EXPIRY` | no (`true`) | Watch the password and account expiry the login returns. |
 | `RUN_INTERVAL_SECONDS` / `RUN_JITTER_SECONDS` | no (`3600` / `30`) | Scheduler cadence. |
 | `RUN_TIMEOUT_SECONDS` | no (`900`) | A cycle exceeding this is abandoned. Must stay below `terminationGracePeriodSeconds`. |
+| `RETRY_BACKOFF_SECONDS` / `RETRY_BACKOFF_MAX_SECONDS` | no (`60` / `900`) | After a failed run, retry on this doubling delay rather than the full interval. |
 | `NOTIFY_ENABLED` | no (`false`) | Master send switch. |
 | `NOTIFY_ROUTES_FILE` / `NOTIFY_ROUTES_JSON` | yes (one of) | Recipient × channel routing. File wins. |
 | `NOTIFY_TIMEOUT_SECONDS` | no (`15`) | Per-delivery timeout. |
@@ -504,6 +513,10 @@ comes from the `Secret` as a real environment variable.
   `/healthz` liveness — process alive and the scheduler loop is not wedged;
   `/readyz` readiness — config valid and the state store reachable.
   A run that produces `UNKNOWN` **MUST NOT** flip liveness; it alerts, it does not restart the pod.
+- A failed cycle is **retried on a backoff**, not left until the next interval
+  (`RETRY_BACKOFF_SECONDS`, doubling to `RETRY_BACKOFF_MAX_SECONDS`, reset by any success). A
+  run that *reached* the portal counts as a success even when what it found is alarming:
+  `UNKNOWN` components are findings, not a broken cycle, and must not trigger backoff.
 - Exit codes (apply to `--once` mode; the long-running service exits non-zero only on fatal
   startup/config failure): `0` success; `1` scrape failure; `2` parse/UNKNOWN present;
   `3` delivery failure; `4` config error. Document any new code here before using it.

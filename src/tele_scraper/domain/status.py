@@ -101,7 +101,9 @@ def derive_status(
 
     # 2. We could not establish an expiry. Loud, never assumed healthy.
     if resolved.parse_error is not None:
-        return result(Status.UNKNOWN, f"parse error: {resolved.parse_error}")
+        # No prefix: parse_error already says what went wrong, and calling an unreachable
+        # portal a "parse error" misdescribes it.
+        return result(Status.UNKNOWN, resolved.parse_error)
     if resolved.expires_at is None:
         return result(Status.UNKNOWN, "expires_at missing and not derivable")
     if resolved.expires_at.tzinfo is None or resolved.expires_at.utcoffset() is None:

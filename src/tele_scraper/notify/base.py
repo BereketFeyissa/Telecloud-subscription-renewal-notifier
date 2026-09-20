@@ -161,6 +161,7 @@ class MessageRenderer:
             "rung_display": humanize(evaluation.rung) if evaluation.rung else "",
             "portal_status": component.portal_status or "unknown",
             "is_credential": component.kind == "credential",
+            "is_run_alert": component.kind == "run",
             "evaluated_at": evaluation.evaluated_at,
             "is_digest": event.digest,
             "count": len(event.evaluations),

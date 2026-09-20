@@ -1,14 +1,18 @@
 {% if is_critical %}🔴{% else %}🟠{% endif %} *{{ status }}* — {{ component_name }}
 
+{% if is_run_alert %}
+{{ reason }}
+{% else %}
 `{{ component_id }}`
 Expires: {{ expires_display }}
 Remaining: {{ remaining_display }}
 Portal: {{ portal_status }}
+{% endif %}
 {% if expires_derived %}
 _Expiry derived from activation + validity, not scraped directly._
 {% endif %}
-{% if status == 'UNKNOWN' %}
-_Validity could not be determined — not confirmed active. Check the portal._
+{% if status == 'UNKNOWN' and not is_run_alert %}
+_{{ reason if reason else 'Validity could not be determined — not confirmed active. Check the portal.' }}_
 {% endif %}
 
 _Repeats until confirmed._

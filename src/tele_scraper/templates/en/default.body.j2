@@ -1,16 +1,20 @@
-Telecloud component status: {{ status }}
+{% if is_run_alert %}Telecloud monitoring: {{ status }}{% else %}Telecloud component status: {{ status }}{% endif %}
 
+{% if is_run_alert %}
+{{ reason }}
+{% else %}
 Component : {{ component_name }}
 ID        : {{ component_id }}
 Status    : {{ status }}{% if reason %} ({{ reason }}){% endif +%}
 Portal    : {{ portal_status }}
 Expires   : {{ expires_display }}
 Remaining : {{ remaining_display }}
+{% endif %}
 {% if expires_derived %}
 Note: the expiry above was computed from activation date + validity period, not read
 directly from the portal. Verify before acting on it.
 {% endif %}
-{% if status == 'UNKNOWN' %}
+{% if status == 'UNKNOWN' and not is_run_alert %}
 This component's validity could not be determined. It is NOT confirmed active — someone
 needs to check the portal directly.
 {% endif %}

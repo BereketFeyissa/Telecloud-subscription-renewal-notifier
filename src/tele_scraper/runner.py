@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from tele_scraper.config import Settings
 from tele_scraper.domain.status import evaluate_all
@@ -31,6 +31,9 @@ log = get_logger(__name__)
 #: Sentinel id for the run-level alert raised when a scrape yields nothing.
 EMPTY_RESULT_ID = "__run__"
 
+#: Sentinel id for the run-level alert raised when the portal cannot be reached.
+UNREACHABLE_ID = "__portal_unreachable__"
+
 #: Prefix given to listing entries that arrive without a usable id. Positional, so it must not
 #: be remembered across runs - position is not identity.
 UNIDENTIFIED_PREFIX = "unidentified-item-"
@@ -38,7 +41,9 @@ UNIDENTIFIED_PREFIX = "unidentified-item-"
 
 #: Ids that are ours, not the portal's. They must never be tracked for disappearance: they
 #: exist only when we synthesise them, so their absence says nothing about the portal.
-SYNTHETIC_IDS = frozenset({EMPTY_RESULT_ID, PASSWORD_COMPONENT_ID, ACCOUNT_COMPONENT_ID})
+SYNTHETIC_IDS = frozenset(
+    {EMPTY_RESULT_ID, UNREACHABLE_ID, PASSWORD_COMPONENT_ID, ACCOUNT_COMPONENT_ID}
+)
 
 
 def _is_trackable(component: Component) -> bool:
@@ -46,6 +51,34 @@ def _is_trackable(component: Component) -> bool:
     return not (
         component.component_id in SYNTHETIC_IDS
         or component.component_id.startswith(UNIDENTIFIED_PREFIX)
+    )
+
+
+def _unreachable_component(error: str, retry_after: timedelta | None) -> Component:
+    """Synthetic record for a run that could not reach the portal at all.
+
+    Without this a total scrape failure produced an exit code, a log line and a metric, and
+    told nobody - the system was blind and silent, which is indistinguishable from everything
+    being fine. That is the exact failure this project exists to prevent, so it alerts like any
+    other UNKNOWN (CLAUDE.md §6).
+
+    The retry is stated because the recipient's first question is whether anyone is still
+    trying. ``None`` means no retry is scheduled - a ``--once`` run - and the text says so
+    rather than promising one that will not happen.
+    """
+    if retry_after is None:
+        follow_up = "This was a single run, so nothing will retry automatically."
+    else:
+        minutes = max(1, round(retry_after.total_seconds() / 60))
+        follow_up = (
+            f"The next attempt is in about {minutes} minute{'s' if minutes != 1 else ''}; "
+            "this repeats until the portal answers or someone confirms it."
+        )
+    return Component(
+        component_id=UNREACHABLE_ID,
+        name="Portal unreachable",
+        kind="run",
+        parse_error=f"Could not reach the portal: {error}. {follow_up}",
     )
 
 
@@ -71,7 +104,8 @@ def _empty_result_component(detail: str) -> Component:
     """
     return Component(
         component_id=EMPTY_RESULT_ID,
-        name="scrape returned no components",
+        name="Portal returned no components",
+        kind="run",
         parse_error=detail,
     )
 
@@ -91,8 +125,13 @@ class Runner:
         self._store = store
         self._router = router
 
-    async def run_once(self) -> RunReport:
-        """Run one cycle. Never raises for ordinary failures; they land in the report."""
+    async def run_once(self, retry_after: timedelta | None = None) -> RunReport:
+        """Run one cycle. Never raises for ordinary failures; they land in the report.
+
+        Args:
+            retry_after: How long until the next attempt if this run fails, so the alert can
+                say. None when nothing will retry.
+        """
         run_id = uuid.uuid4().hex[:12]
         bind_run(run_id)
         started = datetime.now(UTC)
@@ -111,7 +150,14 @@ class Runner:
             components = parse_components(items)
         except ScrapeError as exc:
             scrape_failed = True
-            log.error("run.scrape_failed", error=str(exc))
+            # Reaching nobody is the most severe outcome there is, so it alerts rather than
+            # only setting an exit code.
+            components = [_unreachable_component(str(exc), retry_after)]
+            log.error(
+                "run.scrape_failed",
+                error=str(exc),
+                retry_after_seconds=(retry_after.total_seconds() if retry_after else None),
+            )
         except ParseError as exc:
             # Parse failures are not scrape failures: we reached the portal, we just could not
             # read it. That is UNKNOWN, and UNKNOWN alerts (CLAUDE.md §6, §7.6).

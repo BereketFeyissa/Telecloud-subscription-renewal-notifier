@@ -1,1 +1,1 @@
-[{{ status }}] {{ component_name }} expires {{ expires_display }}
+[{{ status }}] {{ component_name }}{% if not is_run_alert %} expires {{ expires_display }}{% endif %}

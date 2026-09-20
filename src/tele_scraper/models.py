@@ -47,9 +47,11 @@ class Component(BaseModel):
 
     component_id: str = Field(min_length=1)
     name: str = ""
-    #: What this record represents. ``credential`` marks our own portal login rather than a
-    #: purchased item, so messages can say what its expiry actually costs.
-    kind: Literal["component", "credential"] = "component"
+    #: What this record represents. ``credential`` is our own portal login rather than a
+    #: purchased item; ``run`` is a fact about the cycle itself - the portal was unreachable,
+    #: or returned nothing - which has no expiry, no portal status and nothing to renew, so
+    #: messages must not pad it out with empty component fields.
+    kind: Literal["component", "credential", "run"] = "component"
     portal_status: str | None = None
     activated_at: AwareDatetime | None = None
     validity_period: timedelta | None = None

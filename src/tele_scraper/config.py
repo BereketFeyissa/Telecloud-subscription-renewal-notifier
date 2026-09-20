@@ -227,6 +227,13 @@ class Settings(BaseSettings):
     run_interval_seconds: Annotated[int, Field(ge=30, le=86_400)] = 3600
     run_jitter_seconds: Annotated[int, Field(ge=0, le=3600)] = 30
     run_timeout_seconds: Annotated[int, Field(ge=30, le=7200)] = 900
+    #: After a failed run the scheduler retries on this delay rather than sleeping the whole
+    #: interval. A pod that fails its first cycle - a startup race with the CNI will do it -
+    #: would otherwise be blind until the next scheduled run.
+    retry_backoff_seconds: Annotated[int, Field(ge=5, le=3600)] = 60
+    #: The backoff doubles per consecutive failure, capped here, so a portal outage does not
+    #: turn into a retry storm.
+    retry_backoff_max_seconds: Annotated[int, Field(ge=30, le=86_400)] = 900
 
     # --- notification -----------------------------------------------------------
     notify_enabled: bool = False

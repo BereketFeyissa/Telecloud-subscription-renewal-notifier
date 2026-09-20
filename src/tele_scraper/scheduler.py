@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import random
 import signal
+from datetime import timedelta
 
 from tele_scraper.config import Settings
 from tele_scraper.health import HealthState
@@ -37,6 +38,18 @@ class Scheduler:
         self._runner = runner
         self._health = health
         self._stop = asyncio.Event()
+        #: Consecutive failed cycles, which drive the retry backoff. Reset by any success.
+        self._failures = 0
+
+    def next_backoff(self) -> timedelta:
+        """How long to wait before retrying, given the failures seen so far.
+
+        Doubles per consecutive failure up to a cap. Computed *before* a run so the alert can
+        state the real delay rather than an estimate: a recipient's first question about an
+        unreachable portal is whether anything is still trying.
+        """
+        seconds = self._settings.retry_backoff_seconds * (2**self._failures)
+        return timedelta(seconds=min(seconds, self._settings.retry_backoff_max_seconds))
 
     def request_stop(self, reason: str = "signal") -> None:
         """Ask the loop to finish the current cycle and exit."""
@@ -74,11 +87,19 @@ class Scheduler:
         try:
             while not self._stop.is_set():
                 self._health.heartbeat()
+                # Worked out up front so the failure alert can quote the delay it will
+                # actually wait, not a guess.
+                retry_after = self.next_backoff()
+                failed = True
                 try:
                     report = await asyncio.wait_for(
-                        self._runner.run_once(), timeout=self._settings.run_timeout_seconds
+                        self._runner.run_once(retry_after=retry_after),
+                        timeout=self._settings.run_timeout_seconds,
                     )
                     last_exit = report.exit_code
+                    # A run that reached the portal succeeded, even if what it found is
+                    # alarming: UNKNOWN components are findings, not a broken cycle.
+                    failed = report.scrape_failed
                 except TimeoutError:
                     # Bound the blast radius of a hung portal: abandon this cycle, keep the
                     # loop alive, and let the next one try again.
@@ -92,15 +113,32 @@ class Scheduler:
 
                 self._health.heartbeat()
 
+                # Recorded immediately after the run, not as part of the sleep decision: a
+                # cycle's outcome is a fact about the cycle, and a shutdown between the two
+                # must not lose it.
+                if failed:
+                    self._failures += 1
+                else:
+                    self._failures = 0
+
                 with contextlib.suppress(Exception):
                     await self._runner.prune_state()
 
                 if self._stop.is_set():
                     break
 
-                jitter = random.uniform(0, self._settings.run_jitter_seconds)  # noqa: S311
-                delay = self._settings.run_interval_seconds + jitter
-                log.info("scheduler.sleeping", seconds=round(delay, 1))
+                if failed:
+                    # The delay quoted to recipients before the run, so the promise holds.
+                    delay = retry_after.total_seconds()
+                    log.warning(
+                        "scheduler.retrying",
+                        seconds=round(delay, 1),
+                        consecutive_failures=self._failures,
+                    )
+                else:
+                    jitter = random.uniform(0, self._settings.run_jitter_seconds)  # noqa: S311
+                    delay = self._settings.run_interval_seconds + jitter
+                    log.info("scheduler.sleeping", seconds=round(delay, 1))
                 await self._sleep_with_heartbeat(delay)
         finally:
             metrics.SCHEDULER_UP.set(0)

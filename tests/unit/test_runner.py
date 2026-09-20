@@ -124,13 +124,41 @@ async def test_parse_failure_is_unknown_and_still_alerts(
     assert len(slack.sent) == 1
 
 
-async def test_scrape_failure_exits_one_and_sends_nothing(tmp_path: Path, renderer: Any) -> None:
+async def test_an_unreachable_portal_alerts_rather_than_failing_silently(
+    tmp_path: Path, renderer: Any
+) -> None:
+    """Being blind is the most severe outcome; it used to set an exit code and tell nobody."""
     run, slack = build(tmp_path, ExplodingClient(ScrapeError("portal down")), renderer)
-    report = await run.run_once()
+    report = await run.run_once(retry_after=timedelta(minutes=5))
 
     assert report.scrape_failed is True
     assert report.exit_code == 1
-    assert slack.sent == []
+    assert len(slack.sent) == 1
+    alert = slack.sent[0].evaluation
+    assert alert.status is Status.UNKNOWN
+    assert "portal down" in (alert.component.parse_error or "")
+
+
+async def test_the_unreachable_alert_says_when_it_will_retry(tmp_path: Path, renderer: Any) -> None:
+    """A recipient's first question is whether anything is still trying."""
+    run, slack = build(tmp_path, ExplodingClient(ScrapeError("dns")), renderer)
+    await run.run_once(retry_after=timedelta(minutes=5))
+    reason = slack.sent[0].evaluation.component.parse_error or ""
+    assert "next attempt is in about 5 minutes" in reason
+
+    body = renderer.render(slack.sent[0]).body
+    assert "5 minutes" in body, "the retry must reach the recipient, not just the log"
+
+
+async def test_a_single_run_promises_no_retry_it_will_not_make(
+    tmp_path: Path, renderer: Any
+) -> None:
+    """--once has no scheduler behind it, so claiming a retry would be a lie."""
+    run, slack = build(tmp_path, ExplodingClient(ScrapeError("portal down")), renderer)
+    await run.run_once(retry_after=None)
+    reason = slack.sent[0].evaluation.component.parse_error or ""
+    assert "nothing will retry automatically" in reason
+    assert "next attempt" not in reason
 
 
 async def test_missing_fixture_file_is_a_scrape_error(tmp_path: Path, renderer: Any) -> None:
@@ -343,3 +371,33 @@ async def test_detection_can_be_switched_off(tmp_path: Path, renderer: Any) -> N
     path.write_text(listing())
     report = await runner.run_once()
     assert report.evaluations[0].component.component_id == EMPTY_RESULT_ID
+
+
+async def test_the_unreachable_alert_reads_as_a_run_problem_not_a_component(
+    tmp_path: Path, renderer: Any
+) -> None:
+    """It has no expiry, no portal status and nothing to renew; padding it out misleads."""
+    run, slack = build(tmp_path, ExplodingClient(ScrapeError("dns")), renderer)
+    await run.run_once(retry_after=timedelta(minutes=5))
+    message = renderer.render(slack.sent[0])
+
+    assert "telecloud component" not in message.subject
+    assert "Expires" not in message.body
+    assert "Remaining" not in message.body
+    assert "parse error" not in message.body, "nothing was parsed; the prefix misdescribed it"
+    assert message.body.count("Could not reach the portal") == 1, "the reason must not stutter"
+
+
+async def test_an_ordinary_component_alert_is_unaffected(
+    tmp_path: Path, page: Path, renderer: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression guard: the run-alert branch must not strip fields from real components."""
+    monkeypatch.setattr(
+        runner_module,
+        "parse_components",
+        lambda _items: [make_component("c1", "Storage", expires_in=timedelta(days=-1))],
+    )
+    run, slack = build(tmp_path, FixturePortalClient(page), renderer)
+    await run.run_once()
+    body = renderer.render(slack.sent[0]).body
+    assert "Expires" in body and "Remaining" in body and "c1" in body
