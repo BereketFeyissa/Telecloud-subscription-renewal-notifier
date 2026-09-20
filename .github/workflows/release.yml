@@ -50,16 +50,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # The git SHA is the real identity of a build; a version tag is a convenience alias.
-      # metadata-action defaults to flavor latest=auto, which silently adds ':latest' for any
-      # semver tag no matter what the tags list says - it published :latest on v0.1.0, v0.2.0
-      # and v0.3.0 while a comment here claimed otherwise. §3.6 and §13.7 forbid it.
+      # Three tags, each with a job:
+      #   <git sha>  the build's real identity - immutable, and what manifests deploy
+      #   v1.2.3     a human-readable alias for a release
+      #   latest     a pointer to the newest release, for people pulling by hand
+      # What §3.6 and §13.7 forbid is *consuming* a floating tag: no manifest may deploy
+      # :latest and no Dockerfile may build FROM one. Publishing it is not the hazard, and
+      # CI greps the rendered manifests to keep the consuming side honest.
       - uses: docker/metadata-action@v5
         id: meta
         with:
           images: ${{ steps.name.outputs.image }}
-          flavor: |
-            latest=false
           tags: |
             type=sha,format=long,prefix=
             type=ref,event=tag
