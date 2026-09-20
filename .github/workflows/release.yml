@@ -50,12 +50,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # The git SHA is the real identity of a build; a tag is a convenience alias.
-      # ':latest' is deliberately absent (CLAUDE.md §13.7).
+      # The git SHA is the real identity of a build; a version tag is a convenience alias.
+      # metadata-action defaults to flavor latest=auto, which silently adds ':latest' for any
+      # semver tag no matter what the tags list says - it published :latest on v0.1.0, v0.2.0
+      # and v0.3.0 while a comment here claimed otherwise. §3.6 and §13.7 forbid it.
       - uses: docker/metadata-action@v5
         id: meta
         with:
           images: ${{ steps.name.outputs.image }}
+          flavor: |
+            latest=false
           tags: |
             type=sha,format=long,prefix=
             type=ref,event=tag
