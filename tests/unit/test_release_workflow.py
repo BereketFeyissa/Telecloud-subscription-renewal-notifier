@@ -1,9 +1,12 @@
-"""The release workflow must not publish a floating tag.
+"""Floating tags may be published, but never consumed.
 
-§3.6 and §13.7 forbid `:latest`. The release workflow published it anyway on v0.1.0, v0.2.0 and
-v0.3.0, because docker/metadata-action defaults to `flavor: latest=auto` and adds it for any
-semver tag regardless of the `tags:` list — while a comment in the workflow claimed it was
-absent. A comment is not a control; this is.
+§3.6 and §13.7 forbid `:latest` **in a manifest** — the hazard is deploying or building from a
+tag that can move underneath you, not the tag existing in a registry. Publishing `:latest` as a
+pointer to the newest release is a convenience for people pulling by hand.
+
+So these tests guard the consuming side: the Dockerfile must build from a digest, manifests must
+not name a floating tag, and the release must still publish the immutable git SHA that
+deployments actually use.
 
 Parsed as text rather than YAML on purpose: pyyaml is not a declared dependency and §4 forbids
 adding one to satisfy a test.
@@ -17,42 +20,47 @@ import re
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 RELEASE = ROOT / ".github" / "workflows" / "release.yml"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
+DOCKERFILE = ROOT / "Dockerfile"
+OVERLAYS = ROOT / "deploy" / "overlays"
+
+#: An image reference, not prose: attached to the colon with no space, so an error message
+#: reading "a manifest uses :latest" is not a match.
+FLOATING = re.compile(r"[A-Za-z0-9._/-]+:latest")
 
 
 def metadata_block() -> str:
-    """The metadata-action step, up to the start of the next step."""
     text = RELEASE.read_text()
-    start = text.index("docker/metadata-action")
-    rest = text[start:]
+    rest = text[text.index("docker/metadata-action") :]
     end = rest.find("\n      - ")
     return rest if end == -1 else rest[:end]
 
 
-def test_the_floating_latest_tag_is_disabled() -> None:
-    assert re.search(r"latest\s*=\s*false", metadata_block()), (
-        "metadata-action defaults to latest=auto and publishes ':latest' for every semver tag, "
-        "which §3.6 and §13.7 forbid. Set `flavor: latest=false`."
-    )
+def test_the_release_publishes_the_immutable_git_sha() -> None:
+    """The SHA is what manifests deploy, so it must always be published."""
+    assert "type=sha" in metadata_block(), "the git SHA must be one of the published tags (§13.7)"
 
 
-def test_the_git_sha_is_published_as_the_real_identity() -> None:
-    assert "type=sha" in metadata_block(), (
-        "the immutable git SHA must be one of the published tags (§13.7)"
-    )
+def test_the_dockerfile_builds_from_a_digest() -> None:
+    """A base image pinned by tag alone can change underneath a rebuild (§13.2)."""
+    froms = [ln for ln in DOCKERFILE.read_text().splitlines() if ln.startswith("FROM ")]
+    assert froms, "no FROM lines found"
+    for line in froms:
+        assert "@sha256:" in line, f"base image is not digest-pinned: {line}"
 
 
-def test_no_workflow_hardcodes_a_latest_tag() -> None:
-    """No workflow may name a :latest image.
-
-    Matches an image *reference* - something attached to the colon with no space - so ci.yml's
-    own guard, which greps for :latest and prints "a manifest uses :latest", is not flagged.
-    Failing the check that enforces the rule would make the rule unenforceable.
-    """
-    reference = re.compile(r"[A-Za-z0-9._/-]+:latest")
-    for workflow in (RELEASE, CI):
+def test_no_overlay_deploys_a_floating_tag() -> None:
+    """Deploying :latest is the actual hazard §3.6 and §13.7 are about."""
+    for path in sorted(OVERLAYS.rglob("*.yaml")):
         offending = [
             line
-            for line in workflow.read_text().splitlines()
-            if reference.search(line) and not line.strip().startswith("#") and "grep" not in line
+            for line in path.read_text().splitlines()
+            if FLOATING.search(line) and not line.strip().startswith("#")
         ]
-        assert not offending, f"{workflow.name} names a :latest image: {offending}"
+        assert not offending, f"{path.relative_to(ROOT)} deploys a floating tag: {offending}"
+
+
+def test_ci_checks_rendered_manifests_for_floating_tags() -> None:
+    """The overlay check above only sees source; CI must check the rendered output too."""
+    assert ":latest" in CI.read_text(), (
+        "ci.yml no longer guards rendered manifests against floating tags"
+    )

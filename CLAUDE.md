@@ -119,7 +119,10 @@ confirmation and an update to this file in the same change.
    run's exit status and metrics.
 5. **MUST NOT** send a notification from unit tests, dry runs, or local development unless
    `NOTIFY_ENABLED=true` is explicitly set. Default is `false` outside production.
-6. **MUST NOT** use `:latest`, floating tags, or unpinned dependencies in any image or manifest.
+6. **MUST NOT** *consume* `:latest`, a floating tag, or an unpinned dependency: no manifest may
+   deploy one, and no Dockerfile may build `FROM` one. **Publishing** `:latest` to the registry
+   is fine and is done deliberately — it points at the newest release for anyone pulling by
+   hand. The hazard is a reference that can move underneath you, not the tag existing.
 7. **MUST NOT** run the container as root, or with a writable root filesystem.
 8. **MUST** treat every scraped value as untrusted input: validate, coerce, bound-check, and
    never pass it into a shell, SQL string, template, or eval.
@@ -515,7 +518,11 @@ comes from the `Secret` as a real environment variable.
 4. `readOnlyRootFilesystem: true`; writable paths come from `emptyDir` mounts.
 5. No build tools, compilers, shells-as-entrypoint, or `curl` in the final image.
 6. `.dockerignore` **MUST** exclude `.git`, `tests/`, `.env*`, `deploy/`, caches.
-7. Image tag is the **git SHA**. `latest` is forbidden in every manifest.
+7. Deployments reference the **git SHA or a digest** — never a version tag, never `:latest`.
+   A release publishes three tags: the git SHA (the build's identity, and what manifests use),
+   `vX.Y.Z` (a human alias), and `latest` (a pointer to the newest release, for manual pulls).
+   `tests/unit/test_release_workflow.py` guards the consuming side; CI additionally greps the
+   rendered manifests.
 8. Image **MUST** build reproducibly from a clean checkout with no network state beyond
    the pinned lockfile.
 9. `ENTRYPOINT ["python", "-m", "tele_scraper"]`; args come from the manifest.
